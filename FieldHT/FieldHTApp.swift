@@ -11,7 +11,7 @@ import SwiftUI
 struct FieldHTApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MainTabView()
         }
     }
 }
