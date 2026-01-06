@@ -379,6 +379,7 @@ struct ChannelDetailView: View {
                     if results.count > 1 {
                         autofillError = "Found \(results.count) repeaters, using first result"
                     }
+                    saveChannel()
                 }
             } catch {
                 await MainActor.run {
