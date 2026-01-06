@@ -4,6 +4,7 @@ import Combine
 
 // MARK: - Radio Service UUID
 // Replace with your actual radio service UUID
+// Based on your logs: 00001100-D102-11E1-9B23-00025B00A5A5
 
 // MARK: - Discovered Device
 public struct DiscoveredDevice: Identifiable, Equatable {
@@ -48,12 +49,43 @@ public final class BLEScanner: NSObject, ObservableObject {
     private var devices: [UUID: DiscoveredDevice] = [:]
     private var validationCompletions: [UUID: (Bool) -> Void] = [:]
     private var validationTimeouts: [UUID: Timer] = [:]
-    private var hasCheckedPairedDevices = false
+    
+    // UserDefaults key for storing last paired device
+    private let lastPairedDeviceKey = "com.fieldHT.lastPairedDeviceUUID"
 
     // MARK: - Init
     public override init() {
         super.init()
         centralManager = CBCentralManager(delegate: self, queue: nil)
+    }
+
+    // MARK: - Last Paired Device Management
+    public var lastPairedDeviceUUID: UUID? {
+        get {
+            guard let uuidString = UserDefaults.standard.string(forKey: lastPairedDeviceKey),
+                  let uuid = UUID(uuidString: uuidString) else {
+                return nil
+            }
+            return uuid
+        }
+        set {
+            if let uuid = newValue {
+                UserDefaults.standard.set(uuid.uuidString, forKey: lastPairedDeviceKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: lastPairedDeviceKey)
+            }
+        }
+    }
+    
+    public func clearLastPairedDevice() {
+        discoveredDevices.removeAll { $0.id == lastPairedDeviceUUID }
+        lastPairedDeviceUUID = nil
+        statusMessage = "Cleared last paired device"
+    }
+    
+    public func saveLastPairedDevice(_ device: DiscoveredDevice) {
+        lastPairedDeviceUUID = device.id
+        statusMessage = "Saved \(device.name) as last paired device"
     }
 
     // MARK: - Scanning
@@ -66,19 +98,44 @@ public final class BLEScanner: NSObject, ObservableObject {
 
         devices.removeAll()
         discoveredDevices.removeAll()
-        hasCheckedPairedDevices = false
 
         isScanning = true
         statusMessage = "Scanning for devices..."
+        
+        // First, check for previously paired device
+        checkForPreviouslyPairedDevice()
 
-        // First, check already paired/connected peripherals
-        checkPairedPeripherals()
-
-        // Then start scanning for new devices
+        // Then scan for new devices with the radio pairing service
         centralManager.scanForPeripherals(
-            withServices: nil, // Scan for all devices to find more options
+            withServices: [radioPairingUUID],
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
         )
+    }
+    
+    private func checkForPreviouslyPairedDevice() {
+        // Check if we have a previously paired device
+        guard let lastUUID = lastPairedDeviceUUID else { return }
+        
+        // Try to retrieve the peripheral by UUID
+        let peripherals = centralManager.retrievePeripherals(withIdentifiers: [lastUUID])
+        
+        guard let peripheral = peripherals.first else {
+            // Device not found, clear it
+            clearLastPairedDevice()
+            return
+        }
+        
+        // Found the peripheral, add it to the list
+        let device = DiscoveredDevice(
+            peripheral: peripheral,
+            rssi: -60, // Default RSSI for known devices
+            hasRadioService: nil,
+            isPaired: true
+        )
+        devices[peripheral.identifier] = device
+        updateDiscoveredDevices()
+        
+        statusMessage = "Found previously paired device: \(peripheral.name ?? "Unknown")"
     }
 
     public func stopScanning() {
@@ -93,48 +150,6 @@ public final class BLEScanner: NSObject, ObservableObject {
         }
         validationTimeouts.removeAll()
         validationCompletions.removeAll()
-    }
-
-    // MARK: - Check Paired Peripherals
-    private func checkPairedPeripherals() {
-        guard !hasCheckedPairedDevices else { return }
-        hasCheckedPairedDevices = true
-
-        // Retrieve peripherals with the radio service
-        let pairedPeripherals = centralManager.retrieveConnectedPeripherals(
-            withServices: [radioServiceUUID]
-        )
-
-        if !pairedPeripherals.isEmpty {
-            statusMessage = "Found \(pairedPeripherals.count) connected device(s) with radio service"
-        }
-
-        for peripheral in pairedPeripherals {
-            let device = DiscoveredDevice(
-                peripheral: peripheral,
-                rssi: -50, // Default RSSI for connected devices
-                hasRadioService: true,
-                isPaired: true
-            )
-            devices[peripheral.identifier] = device
-        }
-
-        // Also check for known peripherals (previously connected)
-        let knownPeripherals = centralManager.retrievePeripherals(
-            withIdentifiers: Array(devices.keys)
-        )
-
-        for peripheral in knownPeripherals where devices[peripheral.identifier] == nil {
-            let device = DiscoveredDevice(
-                peripheral: peripheral,
-                rssi: -60, // Default RSSI for known devices
-                hasRadioService: nil,
-                isPaired: true
-            )
-            devices[peripheral.identifier] = device
-        }
-
-        updateDiscoveredDevices()
     }
 
     // MARK: - Connection Validation
@@ -178,7 +193,7 @@ public final class BLEScanner: NSObject, ObservableObject {
             centralManager.connect(peripheral, options: nil)
         } else {
             // Already connected, just discover services
-            peripheral.discoverServices([radioServiceUUID])
+            peripheral.discoverServices(nil) // Discover all services for paired devices
         }
     }
 
@@ -197,7 +212,7 @@ public final class BLEScanner: NSObject, ObservableObject {
     }
 
     private func updateDiscoveredDevices() {
-        // Sort: paired first, then by RSSI
+        // Sort: paired first (with star), then by RSSI
         discoveredDevices = devices.values.sorted { device1, device2 in
             if device1.isPaired != device2.isPaired {
                 return device1.isPaired
@@ -262,7 +277,7 @@ extension BLEScanner: CBCentralManagerDelegate {
         } else {
             // New device discovered
             let advertisedServices = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]
-            let hasRadioInAdvertisement = advertisedServices?.contains(radioServiceUUID) ?? false
+            let hasRadioInAdvertisement = advertisedServices?.contains(radioPairingUUID) ?? false
 
             let device = DiscoveredDevice(
                 peripheral: peripheral,
@@ -281,7 +296,8 @@ extension BLEScanner: CBCentralManagerDelegate {
         didConnect peripheral: CBPeripheral
     ) {
         statusMessage = "Connected to \(peripheral.name ?? "device")"
-        peripheral.discoverServices([radioServiceUUID])
+        // Discover all services for validation
+        peripheral.discoverServices(nil)
     }
 
     public func centralManager(
@@ -328,8 +344,9 @@ extension BLEScanner: CBPeripheralDelegate {
             return
         }
 
+        // Check if device has the radio service UUID
         let hasRadio = peripheral.services?.contains(where: {
-            $0.uuid == radioServiceUUID
+            $0.uuid == radioPairingUUID || $0.uuid == radioServiceUUID
         }) == true
 
         // Update device entry

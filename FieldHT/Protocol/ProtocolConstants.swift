@@ -10,6 +10,8 @@ public let radioWriteUUID = CBUUID(string: "00001101-d102-11e1-9b23-00025b00a5a5
 /// BLE Indicate Characteristic UUID
 public let radioIndicateUUID = CBUUID(string: "00001102-d102-11e1-9b23-00025b00a5a5")
 
+public let radioPairingUUID = CBUUID(string: "88A1")
+
 /// Command groups
 public enum CommandGroup: UInt8 {
     case basic = 2

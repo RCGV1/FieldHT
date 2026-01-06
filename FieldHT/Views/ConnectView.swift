@@ -1,10 +1,3 @@
-//
-//  ConnectView.swift
-//  FieldHT
-//
-//  Created by Benjamin Faershtein on 12/13/25.
-//
-
 import SwiftUI
 import CoreBluetooth
 
@@ -15,7 +8,7 @@ struct ConnectView: View {
 
     var body: some View {
         NavigationView {
-            VStack(spacing: 20) {
+            VStack(spacing: 0) {
 
                 // MARK: - Connection Status
                 connectionStatusSection
@@ -34,8 +27,10 @@ struct ConnectView: View {
             updateScanningState()
         }
         // React to connect / disconnect
-        .onChange(of: radioManager.isConnected) { 
-            updateScanningState()
+        .onChange(of: radioManager.isConnected) {
+            if radioManager.isConnected == true {
+                updateScanningState()
+            }
         }
     }
 
@@ -60,6 +55,7 @@ struct ConnectView: View {
 
                     Button {
                         radioManager.disconnect()
+                        scanner.startScanning()
                         selectedDevice = nil
                     } label: {
                         Text("Disconnect")
@@ -75,54 +71,54 @@ struct ConnectView: View {
                 .background(Color(.systemGray6))
                 .cornerRadius(12)
                 .padding(.horizontal)
+                .padding(.bottom, 20)
 
-            } else if radioManager.isConnecting {
-                HStack {
-                    ProgressView()
-                    Text("Connecting...")
-                        .foregroundColor(.secondary)
-                }
-                .padding()
-
-            } else if let error = radioManager.connectionError {
-                Text("Error: \(error)")
-                    .foregroundColor(.red)
-                    .padding()
             }
         }
     }
 
     // MARK: - Device List Section
     private var deviceListSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("Nearby Devices")
                     .font(.headline)
-
-                Spacer()
-
-                Button {
-                    toggleScan()
-                } label: {
-                    Text(scanner.isScanning ? "Stop Scan" : "Start Scan")
-                        .font(.subheadline)
-                }
-                .disabled(radioManager.isConnected)
             }
             .padding(.horizontal)
+            .padding(.vertical, 12)
+            .background(Color(.systemBackground))
+            if radioManager.isConnecting {
+                HStack {
+                    ProgressView()
+                    Text("Connecting...")
+                        .foregroundColor(.secondary)
+                }
+                .padding()
+                .padding(.bottom, 20)
 
+            } else if let error = radioManager.connectionError {
+                Text("Error: \(error)")
+                    .foregroundColor(.red)
+                    .padding()
+                    .padding(.bottom, 20)
+            } else if !scanner.statusMessage.isEmpty {
+                Text(scanner.statusMessage)
+                    .foregroundColor(.secondary)
+                    .padding()
+                    .padding(.bottom, 20)
+            }
             if scanner.bluetoothState != .poweredOn {
                 Text("Bluetooth is not available")
                     .foregroundColor(.red)
                     .padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             } else if scanner.discoveredDevices.isEmpty {
-                Text(scanner.isScanning
-                     ? "Scanning for radio devices..."
-                     : "No devices found")
-                    .foregroundColor(.secondary)
-                    .padding()
-
+                ContentUnavailableView {
+                    Label("No devices found", systemImage: "antenna.radiowaves.left.and.right.slash")
+                } description: {
+                    Text("Enter the Menu on your radio and enable pairing mode")
+                }
             } else {
                 List(scanner.discoveredDevices) { device in
                     Button {
@@ -130,6 +126,13 @@ struct ConnectView: View {
                         selectedDevice = device
                     } label: {
                         HStack {
+                            // Star icon for paired devices
+                            if device.isPaired {
+                                Image(systemName: "star.fill")
+                                    .foregroundColor(.yellow)
+                                    .font(.caption)
+                            }
+                            
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(device.name)
                                     .font(.headline)
@@ -155,11 +158,23 @@ struct ConnectView: View {
                         }
                         .padding(.vertical, 4)
                     }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        if device.isPaired {
+                                Button(role: .destructive) {
+                                    scanner.clearLastPairedDevice()
+                                } label: {
+                                    Label("Unpair", systemImage: "trash")
+                                }
+                            }
+                        }
+                   
                     .disabled(radioManager.isConnecting || radioManager.isConnected)
                 }
+                .listStyle(.plain)
             }
         }
     }
+    
 
     // MARK: - Scanning Logic
     private func updateScanningState() {
@@ -176,13 +191,6 @@ struct ConnectView: View {
         }
     }
 
-    private func toggleScan() {
-        if scanner.isScanning {
-            scanner.stopScanning()
-        } else {
-            scanner.startScanning()
-        }
-    }
 
     // MARK: - Connection Logic
     private func connectToDevice(_ device: DiscoveredDevice) {
@@ -192,6 +200,9 @@ struct ConnectView: View {
                 return
             }
 
+            // Save as last paired device on successful validation
+            scanner.saveLastPairedDevice(device)
+            
             radioManager.connect(to: device.peripheral.identifier)
         }
     }

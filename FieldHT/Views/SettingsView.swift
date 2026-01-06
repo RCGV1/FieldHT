@@ -18,20 +18,11 @@ struct SettingsView: View {
             ZStack {
                 Group {
                     if !radioManager.isConnected {
-                        VStack(spacing: 20) {
-                            Image(systemName: "antenna.radiowaves.left.and.right.slash")
-                                .font(.system(size: 60))
-                                .foregroundColor(.secondary)
-                            Text("Not Connected")
-                                .font(.title2)
-                                .fontWeight(.semibold)
+                        ContentUnavailableView {
+                            Label("Not Connected", systemImage: "antenna.radiowaves.left.and.right.slash")
+                        } description: {
                             Text("Connect to a radio device to view and edit settings")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal)
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if viewModel.isLoading {
                         ProgressView("Loading settings...")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)

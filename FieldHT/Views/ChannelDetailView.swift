@@ -28,9 +28,17 @@ struct ChannelDetailView: View {
     @State private var hasEditedRx = false
     @State private var hasEditedTx = false
     
+    // Autofill state
+    @StateObject private var networkMonitor = NetworkMonitor.shared
+    @State private var showAutofillPrompt = false
+    @State private var isAutofilling = false
+    @State private var autofillError: String?
+    
     // Focus states
     @FocusState private var rxFieldFocused: Bool
     @FocusState private var txFieldFocused: Bool
+    
+    private let repeaterBookService = RepeaterBookService()
     
     // Initializer to populate state from channel
     init(channel: Channel, viewModel: ChannelViewModel) {
@@ -69,7 +77,53 @@ struct ChannelDetailView: View {
                              if newValue.count > 10 {
                                  name = String(newValue.prefix(10))
                              }
+                             // Check if this looks like a callsign and channel is empty
+                             checkForAutofill(callsign: newValue)
                         }
+                }
+                
+                // Autofill prompt
+                if showAutofillPrompt && !isAutofilling {
+                    HStack {
+                        Image(systemName: "wand.and.stars")
+                            .foregroundColor(.blue)
+                        Text("Autofill from RepeaterBook?")
+                            .font(.caption)
+                        Spacer()
+                        Button("Yes") {
+                            autofillFromRepeaterBook()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        Button("No") {
+                            showAutofillPrompt = false
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .padding(.vertical, 4)
+                }
+                
+                if isAutofilling {
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Fetching repeater details...")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+                
+                if let error = autofillError {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundColor(.orange)
+                        Text(error)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
                 }
                 
                 HStack {
@@ -206,5 +260,132 @@ struct ChannelDetailView: View {
         )
         
         viewModel.updateChannel(updatedChannel)
+    }
+    
+    // MARK: - Autofill Functions
+    
+    /// Check if the entered text looks like a valid callsign and show autofill prompt
+    private func checkForAutofill(callsign: String) {
+        // Only show prompt if:
+        // 1. Channel is empty (rxFreq == 0.0)
+        // 2. Name looks like a valid callsign
+        // 3. Internet is available
+        // 4. We haven't already shown the prompt for this callsign
+        
+        let isEmptyChannel = channel.rxFreq == 0.0 && channel.txFreq == 0.0
+        let isValidCallsign = isValidCallsignFormat(callsign)
+        let hasInternet = networkMonitor.isConnected
+        
+        if isEmptyChannel && isValidCallsign && hasInternet && !showAutofillPrompt {
+            showAutofillPrompt = true
+            autofillError = nil
+        } else if !isValidCallsign || !hasInternet {
+            showAutofillPrompt = false
+        }
+    }
+    
+    /// Validate if text looks like a valid callsign format
+    /// Basic validation: 3-7 characters, alphanumeric, typically starts with letter/number
+    private func isValidCallsignFormat(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespaces).uppercased()
+        // Callsigns are typically 3-7 characters, alphanumeric
+        // Common formats: W1AW, K1ABC, N0XYZ, etc.
+        guard trimmed.count >= 3 && trimmed.count <= 7 else {
+            return false
+        }
+        
+        // Must be alphanumeric
+        let alphanumeric = CharacterSet.alphanumerics
+        guard trimmed.unicodeScalars.allSatisfy({ alphanumeric.contains($0) }) else {
+            return false
+        }
+        
+        // Typically starts with a letter or number
+        let firstChar = trimmed.first!
+        return firstChar.isLetter || firstChar.isNumber
+    }
+    
+    /// Autofill channel details from RepeaterBook
+    private func autofillFromRepeaterBook() {
+        guard networkMonitor.isConnected else {
+            autofillError = "No internet connection"
+            showAutofillPrompt = false
+            return
+        }
+        
+        let callsign = name.trimmingCharacters(in: .whitespaces).uppercased()
+        guard isValidCallsignFormat(callsign) else {
+            autofillError = "Invalid callsign format"
+            showAutofillPrompt = false
+            return
+        }
+        
+        isAutofilling = true
+        showAutofillPrompt = false
+        autofillError = nil
+        
+        Task {
+            do {
+                let results = try await repeaterBookService.searchByCallsign(callsign)
+                
+                await MainActor.run {
+                    isAutofilling = false
+                    
+                    guard let firstResult = results.first else {
+                        autofillError = "No repeater found for \(callsign)"
+                        return
+                    }
+                    
+                    // Populate channel fields from first result
+                    if let rxFreqMHz = firstResult.frequencyMHz {
+                        rxFreq = String(format: "%.5f", rxFreqMHz)
+                        hasEditedRx = true
+                    }
+                    
+                    if let txFreqMHz = firstResult.inputFreqMHz {
+                        txFreq = String(format: "%.5f", txFreqMHz)
+                        hasEditedTx = true
+                    } else {
+                        // If no input freq, use output freq for TX (simplex)
+                        if let rxFreqMHz = firstResult.frequencyMHz {
+                            txFreq = String(format: "%.5f", rxFreqMHz)
+                            hasEditedTx = true
+                        }
+                    }
+                    
+                    // Set CTCSS tone if available
+                    if let subAudio = firstResult.subAudio {
+                        rxSubAudio = subAudio
+                        txSubAudio = subAudio
+                    }
+                    
+                    // Set modulation to FM (most repeaters are FM)
+                    txMod = .fm
+                    
+                    // Set bandwidth to wide (typical for repeaters)
+                    bandwidth = .wide
+                    
+                    // High power
+                    txPowerHigh = true
+                    
+                    
+                    
+                    // Update name to callsign if not already set
+                    if name.isEmpty || name == callsign {
+                        name = callsign
+                    }
+                    
+                    // If multiple results found, show a note
+                    if results.count > 1 {
+                        autofillError = "Found \(results.count) repeaters, using first result"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isAutofilling = false
+                    autofillError = "Failed to fetch: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 }
