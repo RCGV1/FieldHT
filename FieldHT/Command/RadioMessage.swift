@@ -18,7 +18,7 @@ public enum ReplyMessage {
     case batteryLevelAsPercentage(Int)
     case beaconSettings(BeaconSettings)
     case regionName(String)
+    case pf(PFConfig)
     case success
     case error(ReplyStatus, String)
 }
-

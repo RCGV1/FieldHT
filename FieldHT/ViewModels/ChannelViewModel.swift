@@ -181,6 +181,54 @@ public class ChannelViewModel: ObservableObject {
         }
     }
     
+    /// Add channels locally (for offline mode when radio not connected)
+    public func addChannelsLocally(_ csvChannels: [Channel]) {
+        let existingChannels = channels
+        
+        // Find empty slots
+        var emptySlots: [Int] = []
+        for i in 0..<30 {
+            if !existingChannels.contains(where: { $0.channelID == i }) {
+                emptySlots.append(i)
+            }
+        }
+        
+        var importedChannels: [Channel] = []
+        var slotIndex = 0
+        
+        for (idx, csvChannel) in csvChannels.enumerated() {
+            if idx < existingChannels.count {
+                // Replace existing
+                var updated = csvChannel
+                updated.channelID = existingChannels[idx].channelID
+                importedChannels.append(updated)
+            } else if slotIndex < emptySlots.count {
+                // Put in empty slot
+                var updated = csvChannel
+                updated.channelID = emptySlots[slotIndex]
+                importedChannels.append(updated)
+                slotIndex += 1
+            } else {
+                break
+            }
+        }
+        
+        // Merge with existing
+        var allChannels = existingChannels
+        for imported in importedChannels {
+            if let existingIdx = allChannels.firstIndex(where: { $0.channelID == imported.channelID }) {
+                allChannels[existingIdx] = imported
+            } else {
+                allChannels.append(imported)
+            }
+        }
+        
+        // Sort by channel ID
+        allChannels.sort { $0.channelID < $1.channelID }
+        
+        channels = allChannels
+    }
+    
     /// Set current active region
     public func setActiveRegion(_ index: Int) {
         guard let radioController = radioController else { return }
@@ -209,6 +257,11 @@ public class ChannelViewModel: ObservableObject {
     
     /// Rename region
     public func renameRegion(_ index: Int, name: String) {
+        #if DEBUG
+        let hexString = name.data(using: .utf8)?.map { String(format: "%02x", $0) }.joined() ?? "nil"
+        print("DEBUG: Renaming region \(index) to '\(name)' (hex: \(hexString))")
+        #endif
+
         guard let radioController = radioController else { return }
         isSaving = true
         Task {

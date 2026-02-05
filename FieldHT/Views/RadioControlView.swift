@@ -11,7 +11,6 @@ struct RadioControlView: View {
     @EnvironmentObject var radioManager: RadioManager
     @State private var localSquelchLevel: Int = 0
     @StateObject private var viewModel = ChannelViewModel()
-    @State private var retryCount = 0
 
 
 
@@ -33,172 +32,274 @@ struct RadioControlView: View {
         }
     }
 
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 20) {
+    private func memoryGroupDisplayName(index: Int) -> String {
+        guard index >= 0, index < radioManager.regionNames.count else {
+            return "Unnamed"
+        }
 
-                if !radioManager.isConnected {
-                    Text("Radio not connected")
-                        .font(.title)
-                        .foregroundColor(.secondary)
-                        .padding()
+        let raw = radioManager.regionNames[index].trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.isEmpty {
+            return "Unnamed"
+        }
+
+        return raw
+    }
+
+    @ViewBuilder
+    private var memoryGroupSection: some View {
+        VStack(alignment: .leading) {
+            Text("Memory Group")
+                .font(.headline)
+
+            if radioManager.isConnected, !radioManager.regionNames.isEmpty {
+                Picker(selection: Binding(
+                    get: { radioManager.activeRegionIndex },
+                    set: { radioManager.setRegion($0) }
+                )) {
+                    ForEach(0..<radioManager.regionNames.count, id: \.self) { index in
+                        Text("\(index + 1).  \(memoryGroupDisplayName(index: index))").tag(index)
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Text("\(radioManager.activeRegionIndex + 1).")
+                            .font(.system(.subheadline, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.black.opacity(0.06))
+                            .clipShape(Capsule())
+
+                        Text(memoryGroupDisplayName(index: radioManager.activeRegionIndex))
+                            .font(.headline)
+                            .lineLimit(1)
+
+                        Spacer(minLength: 12)
+
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .contentShape(Rectangle())
                 }
+                .pickerStyle(.menu)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+                .background(Color(.secondarySystemBackground))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                )
+                .cornerRadius(12)
+            } else {
+                HStack(spacing: 10) {
+                    Text("--.")
+                        .font(.system(.subheadline, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.black.opacity(0.06))
+                        .clipShape(Capsule())
 
-                // MARK: - Memory Group
-                VStack(alignment: .leading) {
-                    Text("Memory Group")
+                    if radioManager.isConnected {
+                        ProgressView()
+                        Text("Loading memory groups...")
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    } else {
+                        Text("Connect to load memory groups")
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 12)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+                .background(Color(.secondarySystemBackground))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                )
+                .cornerRadius(12)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var vfoSection: some View {
+        if radioManager.isDualWatchOn {
+            HStack(spacing: 16) {
+                VFOControl(
+                    title: "Channel A",
+                    channelIndex: radioManager.vfoAIndex,
+                    viewModel: viewModel,
+                    isActive: radioManager.activeChannel == .a,
+                    isVFO: radioManager.isVFOA,
+                    vfoFrequency: radioManager.vfoAFrequencyMHz,
+                    vfoChannel: radioManager.vfoAChannel,
+                    onSelect: { radioManager.setChannelA($0) },
+                    onTap: { radioManager.switchActiveChannel(to: .a) },
+                    onToggleVFO: { radioManager.toggleVFO(for: .a) },
+                    onUpdateChannel: { radioManager.updateChannel($0) }
+                )
+
+                VFOControl(
+                    title: "Channel B",
+                    channelIndex: radioManager.vfoBIndex,
+                    viewModel: viewModel,
+                    isActive: radioManager.activeChannel == .b,
+                    isVFO: radioManager.isVFOB,
+                    vfoFrequency: radioManager.vfoBFrequencyMHz,
+                    vfoChannel: radioManager.vfoBChannel,
+                    onSelect: { radioManager.setChannelB($0) },
+                    onTap: { radioManager.switchActiveChannel(to: .b) },
+                    onToggleVFO: { radioManager.toggleVFO(for: .b) },
+                    onUpdateChannel: { radioManager.updateChannel($0) }
+                )
+            }
+        } else {
+            VFOControl(
+                title: "Channel A",
+                channelIndex: radioManager.vfoAIndex,
+                viewModel: viewModel,
+                isActive: true,
+                isVFO: radioManager.isVFOA,
+                vfoFrequency: radioManager.vfoAFrequencyMHz,
+                vfoChannel: radioManager.vfoAChannel,
+                onSelect: { radioManager.setChannelA($0) },
+                onTap: { radioManager.switchActiveChannel(to: .a) },
+                onToggleVFO: { radioManager.toggleVFO(for: .a) },
+                onUpdateChannel: { radioManager.updateChannel($0) }
+            )
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private var channelNavigationSection: some View {
+        HStack(spacing: 40) {
+            Button(action: previousChannel) {
+                Image(systemName: "arrowshape.backward.fill")
+                    .font(.system(size: 44))
+            }
+            .disabled(validChannels.isEmpty)
+
+            Button(action: nextChannel) {
+                Image(systemName: "arrowshape.forward.fill")
+                    .font(.system(size: 44))
+            }
+            .disabled(validChannels.isEmpty)
+        }
+    }
+
+    private var squelchSection: some View {
+        VStack(alignment: .leading) {
+            HStack {
+                Text("Squelch Level")
+                    .font(.headline)
+                Spacer()
+                Text("\(localSquelchLevel)")
+                    .font(.title3)
+                    .bold()
+            }
+
+            Slider(
+                value: Binding(
+                    get: { Double(localSquelchLevel) },
+                    set: { localSquelchLevel = Int($0) }
+                ),
+                in: 0...9,
+                step: 1,
+                onEditingChanged: { editing in
+                    if !editing {
+                        radioManager.setSquelch(localSquelchLevel)
+                    }
+                }
+            )
+        }
+        .padding()
+        .background(Color(.secondarySystemBackground))
+        .cornerRadius(12)
+    }
+
+    private var rssiGaugeSection: some View {
+        VStack(alignment: .leading) {
+            RSSILinearGauge(rssi: radioManager.rssi)
+        }
+        .padding()
+        .background(Color(.secondarySystemBackground))
+        .cornerRadius(12)
+    }
+
+    @ViewBuilder
+    private var connectionBanner: some View {
+        if !radioManager.isConnected {
+            Text("Radio not connected")
+                .font(.title)
+                .foregroundColor(.secondary)
+                .padding()
+        }
+    }
+
+    private var mainContent: some View {
+        VStack(spacing: 20) {
+            connectionBanner
+
+            // MARK: - Memory Group
+            memoryGroupSection
+
+            // MARK: - Dual Monitor Toggle (Left-Aligned)
+            dualMonitorToggle
+
+            // MARK: - VFO Section
+            vfoSection
+
+            // MARK: - Channel Navigation
+            channelNavigationSection
+
+            // MARK: - Squelch
+            squelchSection
+
+            // MARK: - RSSI Gauge
+            rssiGaugeSection
+
+            Spacer()
+        }
+        .padding()
+    }
+
+    private var dualMonitorToggle: some View {
+        HStack {
+            Button {
+                radioManager.setDualWatch(!radioManager.isDualWatchOn)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: radioManager.isDualWatchOn
+                          ? "rectangle.split.2x1.fill"
+                          : "rectangle")
                         .font(.headline)
 
-                    Picker("Region", selection: Binding(
-                        get: { radioManager.activeRegionIndex },
-                        set: { radioManager.setRegion($0) }
-                    )) {
-                        ForEach(0..<radioManager.regionNames.count, id: \.self) { index in
-                            let name = radioManager.regionNames[index]
-                            Text("\(index + 1). \(name)").tag(index)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color(.secondarySystemBackground))
-                    .cornerRadius(12)
+                    Text("Dual Monitor")
+                        .font(.headline)
                 }
-
-                // MARK: - Dual Monitor Toggle (Left-Aligned)
-                HStack {
-                    Button {
-                        radioManager.setDualWatch(!radioManager.isDualWatchOn)
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: radioManager.isDualWatchOn
-                                  ? "rectangle.split.2x1.fill"
-                                  : "rectangle")
-                                .font(.headline)
-
-                            Text("Dual Monitor")
-                                .font(.headline)
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .foregroundColor(radioManager.isDualWatchOn ? .green : .primary)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(
-                                    radioManager.isDualWatchOn ? Color.green : Color.secondary,
-                                    lineWidth: 2
-                                )
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .foregroundColor(radioManager.isDualWatchOn ? .green : .primary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(
+                            radioManager.isDualWatchOn ? Color.green : Color.secondary,
+                            lineWidth: 2
                         )
-                    }
-
-                    Spacer()
-                }
-                
-                // MARK: - VFO Section
-                if radioManager.isDualWatchOn {
-                    // Dual VFO layout
-                    HStack(spacing: 16) {
-                        VFOControl(
-                            title: "Channel A",
-                            channelIndex: radioManager.vfoAIndex,
-                            viewModel: viewModel,
-                            isActive: radioManager.activeChannel == .a,
-                            isVFO: radioManager.isVFOA,
-                            vfoFrequency: radioManager.vfoAFrequencyMHz,
-                            vfoChannel: radioManager.vfoAChannel,
-                            onSelect: { radioManager.setChannelA($0) },
-                            onTap: { radioManager.switchActiveChannel(to: .a) },
-                            onToggleVFO: { radioManager.toggleVFO(for: .a) },
-                            onUpdateChannel: { radioManager.updateChannel($0) }
-                        )
-
-                        VFOControl(
-                            title: "Channel B",
-                            channelIndex: radioManager.vfoBIndex,
-                            viewModel: viewModel,
-                            isActive: radioManager.activeChannel == .b,
-                            isVFO: radioManager.isVFOB,
-                            vfoFrequency: radioManager.vfoBFrequencyMHz,
-                            vfoChannel: radioManager.vfoBChannel,
-                            onSelect: { radioManager.setChannelB($0) },
-                            onTap: { radioManager.switchActiveChannel(to: .b) },
-                            onToggleVFO: { radioManager.toggleVFO(for: .b) },
-                            onUpdateChannel: { radioManager.updateChannel($0) }
-                        )
-                    }
-                } else {
-                    // Single VFO A — full width
-                    VFOControl(
-                        title: "Channel A",
-                        channelIndex: radioManager.vfoAIndex,
-                        viewModel: viewModel,
-                        isActive: true,
-                        isVFO: radioManager.isVFOA,
-                        vfoFrequency: radioManager.vfoAFrequencyMHz,
-                        vfoChannel: radioManager.vfoAChannel,
-                        onSelect: { radioManager.setChannelA($0) },
-                        onTap: { radioManager.switchActiveChannel(to: .a) },
-                        onToggleVFO: { radioManager.toggleVFO(for: .a) },
-                        onUpdateChannel: { radioManager.updateChannel($0) }
-                    )
-                    .frame(maxWidth: .infinity)
-                }
-
-                // MARK: - Channel Navigation
-                HStack(spacing: 40) {
-                    Button(action: previousChannel) {
-                        Image(systemName: "arrowshape.backward.fill")
-                            .font(.system(size: 44))
-                    }
-                    .disabled(validChannels.isEmpty)
-
-                    Button(action: nextChannel) {
-                        Image(systemName: "arrowshape.forward.fill")
-                            .font(.system(size: 44))
-                    }
-                    .disabled(validChannels.isEmpty)
-                }
-
-                // MARK: - Squelch
-                VStack(alignment: .leading) {
-                    HStack {
-                        Text("Squelch Level")
-                            .font(.headline)
-                        Spacer()
-                        Text("\(localSquelchLevel)")
-                            .font(.title3)
-                            .bold()
-                    }
-
-                    Slider(
-                        value: Binding(
-                            get: { Double(localSquelchLevel) },
-                            set: { localSquelchLevel = Int($0) }
-                        ),
-                        in: 0...9,
-                        step: 1,
-                        onEditingChanged: { editing in
-                            if !editing {
-                                radioManager.setSquelch(localSquelchLevel)
-                            }
-                        }
-                    )
-                }
-                .padding()
-                .background(Color(.secondarySystemBackground))
-                .cornerRadius(12)
-
-                // MARK: - RSSI Gauge
-                VStack(alignment: .leading) {
-                    RSSILinearGauge(rssi: radioManager.rssi)
-                }
-                .padding()
-                .background(Color(.secondarySystemBackground))
-                .cornerRadius(12)
-
-                Spacer()
+                )
             }
-            .padding()
+
+            Spacer()
+        }
+    }
+
+    var body: some View {
+        ScrollView {
+            mainContent
         }
         .navigationTitle("Radio Control")
         .disabled(radioManager.isBusy)
@@ -218,50 +319,11 @@ struct RadioControlView: View {
         }
         .onChange(of: radioManager.activeRegionIndex) { oldVal, newVal in
             if oldVal != newVal {
-                Task {
-                    await hydrateAndReload()
-                }
+                viewModel.loadChannels()
             }
         }
         .onChange(of: radioManager.squelchLevel) {
             localSquelchLevel = $0
-        }
-    }
-    
-    private func hydrateAndReload() async {
-        await MainActor.run {
-            retryCount = 0
-        }
-
-        let backoffs = [5, 10, 15]
-
-        for attempt in 0..<3 {
-            await MainActor.run {
-                retryCount = attempt
-            }
-
-            do {
-                try await radioManager.radioController?.hydrateChannels()
-                await MainActor.run {
-                    viewModel.loadChannels()
-                    retryCount = 0
-                }
-                return // Success - exit the function
-            } catch {
-                print("Hydration attempt \(attempt + 1) failed: \(error)")
-
-                // If not the last attempt, wait before retrying (5, 10, 15 seconds)
-                if attempt < backoffs.count {
-                    let delaySeconds = backoffs[attempt]
-                    let delay = UInt64(delaySeconds) * 1_000_000_000
-                    try? await Task.sleep(nanoseconds: delay)
-                }
-            }
-        }
-
-        // All retries failed
-        await MainActor.run {
-            retryCount = 0
         }
     }
 
@@ -550,7 +612,7 @@ struct VFOEditSheet: View {
             }
         }
     }
-    
+
     private func save() {
         if var rx = Double(rxFreqString), var tx = Double(isSimplex ? rxFreqString : txFreqString) {
             var updated = channel

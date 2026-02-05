@@ -9,6 +9,18 @@ public class CommandConnection: BLEConnectionDelegate {
     private var eventHandlers: [UUID: EventHandler] = [:]
     private var pendingReplies: [UInt16: (CheckedContinuation<RadioMessage, Error>)] = [:]
     private let queue = DispatchQueue(label: "com.benlink.command")
+
+    private func commandLabel(commandGroup: CommandGroup, command: UInt16) -> String {
+        switch commandGroup {
+        case .basic:
+            if let basic = BasicCommand(rawValue: command) {
+                return "basic.\(basic)"
+            }
+            return "basic.unknown(\(command))"
+        case .extended:
+            return "extended(\(command))"
+        }
+    }
     
     /// Connection state - true when fully connected and ready to communicate
     public var isConnected: Bool {
@@ -99,7 +111,8 @@ public class CommandConnection: BLEConnectionDelegate {
         queue.async {
             do {
                 let message = try ProtocolDecoder.decodeMessage(data)
-                print("[BLE-RX] Decoded -> Reply: \(message.isReply), Grp: \(message.commandGroup), Cmd: \(message.command), Body: \(message.body.map { String(format: "%02hhx", $0) }.joined())")
+                let label = self.commandLabel(commandGroup: message.commandGroup, command: message.command)
+                print("[BLE-RX] Decoded -> Reply: \(message.isReply), \(label), Body: \(message.body.map { String(format: "%02hhx", $0) }.joined())")
                 
                 // Handle replies
                 if message.isReply {
@@ -238,15 +251,18 @@ public class CommandConnection: BLEConnectionDelegate {
             }
             return .success
             
-            return .success
-            
         case (.basic, BasicCommand.readRegionName.rawValue):
             let replyStatus = try decodeReplyStatus(message.body)
             guard replyStatus == .success else {
                 return .error(replyStatus, "Failed to get region name")
             }
             let bodyData = message.body.dropFirst(1)
-            let name = try ProtocolDecoder.decodeRegionName(bodyData)
+            // Reply body format: [region_id (1 byte)] + [name bytes]
+            if bodyData.isEmpty {
+                return .regionName("")
+            }
+            let nameData = bodyData.dropFirst(1)
+            let name = try ProtocolDecoder.decodeRegionName(nameData)
             return .regionName(name)
             
         case (.basic, BasicCommand.writeRegionName.rawValue):
@@ -262,13 +278,27 @@ public class CommandConnection: BLEConnectionDelegate {
                 return .error(replyStatus, "Failed to set region")
             }
             return .success
-
-            return .success
             
         case (.basic, BasicCommand.writeRegionCh.rawValue):
             let replyStatus = try decodeReplyStatus(message.body)
             guard replyStatus == .success else {
                 return .error(replyStatus, "Failed to set region channel")
+            }
+            return .success
+            
+        case (.basic, BasicCommand.getPF.rawValue):
+            let replyStatus = try decodeReplyStatus(message.body)
+            guard replyStatus == .success else {
+                return .error(replyStatus, "Failed to get PF")
+            }
+            let bodyData = message.body
+            let pfConfig = try ProtocolDecoder.decodePF(bodyData)
+            return .pf(pfConfig)
+            
+        case (.basic, BasicCommand.setPF.rawValue):
+            let replyStatus = try decodeReplyStatus(message.body)
+            guard replyStatus == .success else {
+                return .error(replyStatus, "Failed to set PF")
             }
             return .success
 
@@ -351,6 +381,17 @@ public class CommandConnection: BLEConnectionDelegate {
                     isReply: false,
                     body: body
                 )
+
+#if DEBUG
+                let hexMessage = messageData.map { String(format: "%02hhx", $0) }.joined()
+                print("[BLE-TX-RAW] \(hexMessage)")
+                if let parsed = try? ProtocolDecoder.decodeMessage(messageData) {
+                    let parsedBodyHex = parsed.body.map { String(format: "%02hhx", $0) }.joined()
+                    print("[BLE-TX-PARSED] Grp: \(parsed.commandGroup), isReply: \(parsed.isReply), Cmd: \(parsed.command), Body: \(parsedBodyHex)")
+                } else {
+                    print("[BLE-TX-PARSED] Failed to decode outgoing message")
+                }
+#endif
                 
                 Task {
                     do {
@@ -543,7 +584,7 @@ public class CommandConnection: BLEConnectionDelegate {
     
     public func getRCBatteryLevel() async throws -> Int {
         let body = ProtocolEncoder.encodeReadPowerStatus(.rcBatteryLevel)
-        let reply = try await sendCommandAndWaitForReply(
+        _ = try await sendCommandAndWaitForReply(
             commandGroup: .basic,
             command: BasicCommand.readStatus.rawValue,
             body: body
@@ -659,6 +700,58 @@ public class CommandConnection: BLEConnectionDelegate {
         let reply = try await sendCommandAndWaitForReply(
             commandGroup: .basic,
             command: BasicCommand.writeRegionName.rawValue,
+            body: body
+        )
+        
+        guard case .reply(.success) = reply else {
+            if case .reply(.error(let status, let message)) = reply {
+                throw ProtocolError.commandFailed(status, message)
+            }
+            throw ProtocolError.invalidReply
+        }
+    }
+
+    public func setCurrentRegionName(_ name: String) async throws {
+        let body = ProtocolEncoder.encodeWriteRegionNameNameOnly(name)
+        let reply = try await sendCommandAndWaitForReply(
+            commandGroup: .basic,
+            command: BasicCommand.writeRegionName.rawValue,
+            body: body
+        )
+
+        guard case .reply(.success) = reply else {
+            if case .reply(.error(let status, let message)) = reply {
+                throw ProtocolError.commandFailed(status, message)
+            }
+            throw ProtocolError.invalidReply
+        }
+    }
+    
+    // MARK: - PF API
+    
+    public func getPF() async throws -> PFConfig {
+        let body = ProtocolEncoder.encodeGetPF()
+        let reply = try await sendCommandAndWaitForReply(
+            commandGroup: .basic,
+            command: BasicCommand.getPF.rawValue,
+            body: body
+        )
+        
+        guard case .reply(.pf(let pfConfig)) = reply else {
+            if case .reply(.error(let status, let message)) = reply {
+                throw ProtocolError.commandFailed(status, message)
+            }
+            throw ProtocolError.invalidReply
+        }
+        
+        return pfConfig
+    }
+    
+    public func setPF(_ pfConfig: PFConfig) async throws {
+        let body = ProtocolEncoder.encodeSetPF(pfConfig)
+        let reply = try await sendCommandAndWaitForReply(
+            commandGroup: .basic,
+            command: BasicCommand.setPF.rawValue,
             body: body
         )
         

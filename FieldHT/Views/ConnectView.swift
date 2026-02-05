@@ -6,6 +6,14 @@ struct ConnectView: View {
     @StateObject private var scanner = BLEScanner()
     @State private var selectedDevice: DiscoveredDevice?
 
+    private var connectedDeviceName: String? {
+        if let selectedDevice {
+            return selectedDevice.name
+        }
+        guard let uuid = radioManager.lastPairedDeviceUUID else { return nil }
+        return scanner.knownDevice(for: uuid)?.name
+    }
+
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
@@ -29,6 +37,10 @@ struct ConnectView: View {
         // React to connect / disconnect
         .onChange(of: radioManager.isConnected) {
             if radioManager.isConnected == true {
+                if selectedDevice == nil,
+                   let uuid = radioManager.lastPairedDeviceUUID {
+                    selectedDevice = scanner.knownDevice(for: uuid)
+                }
                 updateScanningState()
             }
         }
@@ -39,17 +51,19 @@ struct ConnectView: View {
         Group {
             if radioManager.isConnected {
                 VStack(spacing: 12) {
-                    if let device = selectedDevice {
-                        Text(device.name)
-                            .font(.title)
-                            .foregroundColor(.secondary)
-                    }
                     HStack {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundColor(.green)
                             .font(.title2)
                         Text("Connected")
                             .font(.headline)
+                    }
+
+                    if let name = connectedDeviceName {
+                        Text(name)
+                            .font(.title3)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
                     }
                    
 
@@ -87,7 +101,27 @@ struct ConnectView: View {
             .padding(.horizontal)
             .padding(.vertical, 12)
             .background(Color(.systemBackground))
-            if radioManager.isConnecting {
+
+            if radioManager.isConnected {
+                HStack(spacing: 10) {
+                    Image(systemName: "dot.radiowaves.left.and.right")
+                        .foregroundColor(.secondary)
+                    Text("Connected - disconnect to search")
+                        .foregroundColor(.secondary)
+                }
+                .padding()
+                .padding(.bottom, 20)
+
+            } else if radioManager.isAutoReconnecting {
+                HStack {
+                    ProgressView()
+                    Text("Reconnecting...")
+                        .foregroundColor(.secondary)
+                }
+                .padding()
+                .padding(.bottom, 20)
+
+            } else if radioManager.isConnecting {
                 HStack {
                     ProgressView()
                     Text("Connecting...")
@@ -102,10 +136,12 @@ struct ConnectView: View {
                     .padding()
                     .padding(.bottom, 20)
             } else if !scanner.statusMessage.isEmpty {
-                Text(scanner.statusMessage)
-                    .foregroundColor(.secondary)
-                    .padding()
-                    .padding(.bottom, 20)
+                if scanner.isScanning || !scanner.discoveredDevices.isEmpty {
+                    Text(scanner.statusMessage)
+                        .foregroundColor(.secondary)
+                        .padding()
+                        .padding(.bottom, 20)
+                }
             }
             if scanner.bluetoothState != .poweredOn {
                 Text("Bluetooth is not available")
@@ -113,11 +149,25 @@ struct ConnectView: View {
                     .padding()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            } else if scanner.discoveredDevices.isEmpty {
+            } else if radioManager.isConnected {
                 ContentUnavailableView {
-                    Label("No devices found", systemImage: "antenna.radiowaves.left.and.right.slash")
+                    Label("Connected", systemImage: "checkmark.circle.fill")
                 } description: {
-                    Text("Enter the Menu on your radio and enable pairing mode")
+                    Text("Scanning pauses while connected")
+                        .foregroundColor(.secondary)
+                }
+
+            } else if !radioManager.isConnected, scanner.discoveredDevices.isEmpty {
+                ContentUnavailableView {
+                    Label(scanner.isScanning ? "Searching for radios" : "No radios found", systemImage: "antenna.radiowaves.left.and.right")
+                } description: {
+                    VStack(spacing: 12) {
+                        if scanner.isScanning {
+                            ProgressView()
+                        }
+                        Text("On your radio: Menu -> Pairing mode")
+                            .foregroundColor(.secondary)
+                    }
                 }
             } else {
                 List(scanner.discoveredDevices) { device in
@@ -136,10 +186,6 @@ struct ConnectView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(device.name)
                                     .font(.headline)
-
-                                Text(device.id.uuidString)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
                             }
 
                             Spacer()
@@ -167,7 +213,7 @@ struct ConnectView: View {
                                 }
                             }
                         }
-                   
+
                     .disabled(radioManager.isConnecting || radioManager.isConnected)
                 }
                 .listStyle(.plain)
@@ -178,15 +224,16 @@ struct ConnectView: View {
 
     // MARK: - Scanning Logic
     private func updateScanningState() {
-        // Start scanning by default when NOT connected
+        // Start scanning by default when NOT connected and NOT actively connecting.
         if !radioManager.isConnected,
+           !radioManager.isConnecting,
            scanner.bluetoothState == .poweredOn,
            !scanner.isScanning {
             scanner.startScanning()
         }
 
-        // Stop scanning once connected
-        if radioManager.isConnected, scanner.isScanning {
+        // Stop scanning once connected or while a connection attempt is in progress.
+        if (radioManager.isConnected || radioManager.isConnecting), scanner.isScanning {
             scanner.stopScanning()
         }
     }

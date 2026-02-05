@@ -36,8 +36,16 @@ struct SettingsView: View {
                                     ) {
                                         Label("Channel Configuration", systemImage: "list.number")
                                     }
+                                    
+                                    NavigationLink(
+                                        destination: PFSettingsView(radioController: radioController, viewModel: viewModel)
+                                    ) {
+                                        Label("Programmable Buttons", systemImage: "button.programmable")
+                                    }
                                 } else {
                                     Label("Channel Configuration", systemImage: "list.number")
+                                        .foregroundColor(.secondary)
+                                    Label("Programmable Buttons", systemImage: "button.programmable")
                                         .foregroundColor(.secondary)
                                 }
                             }

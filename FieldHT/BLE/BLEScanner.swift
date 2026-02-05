@@ -152,6 +152,32 @@ public final class BLEScanner: NSObject, ObservableObject {
         validationCompletions.removeAll()
     }
 
+    // MARK: - Known device lookup
+
+    /// Best-effort lookup for a previously seen/paired device.
+    /// This is useful for showing a friendly name even when we are not scanning.
+    public func knownDevice(for uuid: UUID) -> DiscoveredDevice? {
+        if let existing = devices[uuid] {
+            return existing
+        }
+
+        guard centralManager.state == .poweredOn else {
+            return nil
+        }
+
+        let peripherals = centralManager.retrievePeripherals(withIdentifiers: [uuid])
+        guard let peripheral = peripherals.first else {
+            return nil
+        }
+
+        return DiscoveredDevice(
+            peripheral: peripheral,
+            rssi: -60,
+            hasRadioService: nil,
+            isPaired: true
+        )
+    }
+
     // MARK: - Connection Validation
     public func validateRadioService(
         _ device: DiscoveredDevice,

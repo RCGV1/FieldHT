@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ChannelListView: View {
     @StateObject private var viewModel = ChannelViewModel()
@@ -17,6 +18,9 @@ struct ChannelListView: View {
     @State private var isHydrating = false
     @State private var retryCount = 0
     @State private var isManualSwitch = false
+    @State private var showImportPicker = false
+    @State private var isImporting = false
+    @State private var importError: String?
 
     private let maxRetries = 3
 
@@ -38,12 +42,17 @@ struct ChannelListView: View {
                                 Text("\(index+1).  \(viewModel.regions[index])").tag(index)
                             }
                         }
-                        .disabled(isHydrating)
+                        .disabled(isHydrating || isImporting)
 
                         Button(action: { showRegions = true }) {
                             Label("Manage Group Names", systemImage: "pencil")
                         }
-                        .disabled(isHydrating)
+                        .disabled(isHydrating || isImporting)
+                        
+                        Button(action: { showImportPicker = true }) {
+                            Label("Import from CSV", systemImage: "square.and.arrow.down")
+                        }
+                        .disabled(isHydrating || isImporting)
                     }
                 }
 
@@ -79,7 +88,7 @@ struct ChannelListView: View {
                                 }
                             }
                         }
-                        .disabled(isHydrating)
+                        .disabled(isHydrating || isImporting)
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
                                 viewModel.deleteChannel(channel)
@@ -89,11 +98,23 @@ struct ChannelListView: View {
                         }
                     }
                 }
+                
+                if let error = importError {
+                    Section {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle")
+                                .foregroundColor(.orange)
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
             }
-            .blur(radius: isHydrating ? 3 : 0)
+            .blur(radius: isHydrating || isImporting ? 3 : 0)
 
-            // Hydration loading overlay
-            if isHydrating {
+            // Hydration/Import loading overlay
+            if isHydrating || isImporting {
                 ZStack {
                     Color.black.opacity(0.3)
                         .ignoresSafeArea()
@@ -103,7 +124,9 @@ struct ChannelListView: View {
                             .scaleEffect(1.5)
                             .progressViewStyle(CircularProgressViewStyle(tint: .white))
 
-                        Text(retryCount > 0
+                        Text(isImporting
+                            ? "Importing channels..."
+                            : retryCount > 0
                             ? "Syncing with radio... (Attempt \(retryCount + 1)/\(maxRetries))"
                             : "Syncing with radio...")
                             .font(.headline)
@@ -120,10 +143,9 @@ struct ChannelListView: View {
         }
         .navigationTitle("Channels")
         .onAppear {
-                let controller = radioController ?? radioManager.radioController
-                viewModel.setRadioController(controller)
-                viewModel.loadChannels()
-
+            let controller = radioController ?? radioManager.radioController
+            viewModel.setRadioController(controller)
+            viewModel.loadChannels()
         }
         .onChange(of: radioManager.activeRegionIndex) {
             // Only hydrate if this wasn't triggered by our manual switch
@@ -151,6 +173,15 @@ struct ChannelListView: View {
         }
         .sheet(isPresented: $showRegions) {
             RegionManagementView(viewModel: viewModel)
+        }
+        .fileImporter(
+            isPresented: $showImportPicker,
+            allowedContentTypes: [.commaSeparatedText, UTType(filenameExtension: "csv") ?? .commaSeparatedText],
+            allowsMultipleSelection: false
+        ) { result in
+            Task {
+                await handleImport(result: result)
+            }
         }
     }
 
@@ -250,6 +281,238 @@ struct ChannelListView: View {
                 isManualSwitch = false
                 viewModel.errorMessage = "Failed to switch region: \(error.localizedDescription)"
             }
+        }
+    }
+    
+    // MARK: - CSV Import
+    
+    private func handleImport(result: Result<[URL], Error>) async {
+        await MainActor.run {
+            isImporting = true
+            importError = nil
+        }
+        
+        do {
+            guard let fileURL = try result.get().first else {
+                await MainActor.run {
+                    isImporting = false
+                    importError = "No file selected"
+                }
+                return
+            }
+            
+            guard fileURL.startAccessingSecurityScopedResource() else {
+                await MainActor.run {
+                    isImporting = false
+                    importError = "Unable to access file"
+                }
+                return
+            }
+            defer { fileURL.stopAccessingSecurityScopedResource() }
+            
+            let csvString = try String(contentsOf: fileURL, encoding: .utf8)
+            let channels = try parseCSV(csvString)
+            
+            // Limit to 30 channels
+            let channelsToImport = Array(channels.prefix(30))
+            
+            print("ChannelListView: Importing \(channelsToImport.count) channels to region \(viewModel.activeRegionIndex)")
+            
+            // Import channels to the current region
+            if radioManager.isConnected, let controller = radioManager.radioController {
+                // Try to write to radio
+                await MainActor.run {
+                    viewModel.isSaving = true
+                }
+                
+                do {
+                    // Get current region's channels
+                    let existingChannels = controller.channels(forRegion: viewModel.activeRegionIndex)
+                    
+                    // Update existing slots first
+                    var importedCount = 0
+                    for (idx, csvChannel) in channelsToImport.enumerated() {
+                        if idx < existingChannels.count {
+                            var updatedChannel = csvChannel
+                            updatedChannel.channelID = existingChannels[idx].channelID
+                            try await controller.setChannel(updatedChannel)
+                            importedCount += 1
+                        } else {
+                            break
+                        }
+                    }
+                    
+                    // If we have more CSV channels, try to fill empty slots
+                    if importedCount < channelsToImport.count {
+                        let emptySlots = existingChannels.filter { $0.rxFreq == 0 && $0.txFreq == 0 }
+                        var slotIndex = 0
+                        
+                        for idx in importedCount..<channelsToImport.count {
+                            if slotIndex < emptySlots.count {
+                                var updatedChannel = channelsToImport[idx]
+                                updatedChannel.channelID = emptySlots[slotIndex].channelID
+                                try await controller.setChannel(updatedChannel)
+                                slotIndex += 1
+                            } else {
+                                break
+                            }
+                        }
+                    }
+                    
+                    // Refresh
+                    try await controller.hydrateChannels()
+                    
+                    await MainActor.run {
+                        viewModel.isSaving = false
+                        viewModel.loadChannels()
+                        isImporting = false
+                        importError = channels.count > 30 ? "Imported first 30 of \(channels.count) channels" : nil
+                    }
+                } catch {
+                    await MainActor.run {
+                        viewModel.isSaving = false
+                        importError = "Radio write failed, storing locally: \(error.localizedDescription)"
+                    }
+                    // Fall back to local storage
+                    viewModel.addChannelsLocally(channelsToImport)
+                    await MainActor.run {
+                        isImporting = false
+                    }
+                }
+            } else {
+                // Store locally when not connected
+                viewModel.addChannelsLocally(channelsToImport)
+                await MainActor.run {
+                    isImporting = false
+                    importError = channels.count > 30 ? "Saved \(channelsToImport.count) channels locally (not connected to radio)" : nil
+                }
+            }
+            
+        } catch {
+            print("ChannelListView: Import error: \(error)")
+            await MainActor.run {
+                isImporting = false
+                importError = "Import failed: \(error.localizedDescription)"
+            }
+        }
+    }
+    
+    private func parseCSV(_ csvString: String) throws -> [Channel] {
+        var channels: [Channel] = []
+        let lines = csvString.components(separatedBy: .newlines)
+        
+        guard lines.count > 1 else {
+            throw CSVImportError.invalidFormat("File is empty or has no data rows")
+        }
+        
+        // Parse header
+        let header = lines[0].components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        
+        // Find column indices
+        guard let titleIdx = header.firstIndex(of: "title"),
+              let txFreqIdx = header.firstIndex(of: "tx_freq"),
+              let rxFreqIdx = header.firstIndex(of: "rx_freq") else {
+            throw CSVImportError.invalidFormat("Missing required columns: title, tx_freq, rx_freq")
+        }
+        
+        let txSubAudioIdx = header.firstIndex(of: "tx_sub_audio")
+        let rxSubAudioIdx = header.firstIndex(of: "rx_sub_audio")
+        let txPowerIdx = header.firstIndex(of: "tx_power")
+        let bandwidthIdx = header.firstIndex(of: "bandwidth")
+        let scanIdx = header.firstIndex(of: "scan")
+        let talkAroundIdx = header.firstIndex(of: "talk_around")
+        let preDeEmphIdx = header.firstIndex(of: "pre_de_emph_bypass")
+        let signIdx = header.firstIndex(of: "sign")
+        let txDisIdx = header.firstIndex(of: "tx_dis")
+        let muteIdx = header.firstIndex(of: "mute")
+        let rxModIdx = header.firstIndex(of: "rx_modulation")
+        let txModIdx = header.firstIndex(of: "tx_modulation")
+        
+        // Parse data rows
+        for (index, line) in lines.dropFirst().enumerated() {
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmedLine.isEmpty else { continue }
+            
+            let values = trimmedLine.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            
+            guard values.count >= header.count else {
+                print("Warning: Skipping row \(index + 2) - not enough columns")
+                continue
+            }
+            
+            // Parse required fields
+            let name = values[titleIdx]
+            guard let txFreqInt = Int(values[txFreqIdx]),
+                  let rxFreqInt = Int(values[rxFreqIdx]) else {
+                print("Warning: Skipping row \(index + 2) - invalid frequency")
+                continue
+            }
+            
+            let txFreq = Double(txFreqInt) / 100000.0
+            let rxFreq = Double(rxFreqInt) / 100000.0
+            
+            // Parse optional fields
+            let txSubAudio = txSubAudioIdx.flatMap { parseSubAudio(values[$0]) }
+            let rxSubAudio = rxSubAudioIdx.flatMap { parseSubAudio(values[$0]) }
+            let txPower = txPowerIdx.map { values[$0] } ?? "HIGH"
+            let bandwidth = bandwidthIdx.flatMap { Int(values[$0]) } ?? 1
+            let scan = scanIdx.flatMap { Int(values[$0]) } ?? 1
+            let talkAround = talkAroundIdx.flatMap { Int(values[$0]) } ?? 0
+            let preDeEmph = preDeEmphIdx.flatMap { Int(values[$0]) } ?? 0
+            let sign = signIdx.flatMap { Int(values[$0]) } ?? 0
+            let txDis = txDisIdx.flatMap { Int(values[$0]) } ?? 0
+            let mute = muteIdx.flatMap { Int(values[$0]) } ?? 0
+            let rxMod = rxModIdx.flatMap { Int(values[$0]) } ?? 0
+            let txMod = txModIdx.flatMap { Int(values[$0]) } ?? 0
+            
+            let channel = Channel(
+                channelID: index, // Will be overwritten when saved to correct slot
+                txMod: ModulationType(rawValue: txMod == 1 ? "AM" : "FM") ?? .fm,
+                txFreq: txFreq,
+                rxMod: ModulationType(rawValue: rxMod == 1 ? "AM" : "FM") ?? .fm,
+                rxFreq: rxFreq,
+                txSubAudio: txSubAudio,
+                rxSubAudio: rxSubAudio,
+                scan: scan == 1,
+                txAtMaxPower: txPower == "HIGH",
+                talkAround: talkAround == 1,
+                bandwidth: BandwidthType(rawValue: bandwidth == 1 ? "WIDE" : "NARROW") ?? .wide,
+                preDeEmphBypass: preDeEmph == 1,
+                sign: sign == 1,
+                txAtMedPower: txPower == "MED",
+                txDisable: txDis == 1,
+                fixedFreq: false,
+                fixedBandwidth: false,
+                fixedTxPower: false,
+                mute: mute == 1,
+                name: String(name.prefix(10))
+            )
+            
+            channels.append(channel)
+        }
+        
+        guard !channels.isEmpty else {
+            throw CSVImportError.invalidFormat("No valid channels found in file")
+        }
+        
+        return channels
+    }
+    
+    private func parseSubAudio(_ value: String) -> SubAudio? {
+        guard let freq = Double(value), freq > 0 else {
+            return nil
+        }
+        return .frequency(freq)
+    }
+}
+
+enum CSVImportError: LocalizedError {
+    case invalidFormat(String)
+    
+    var errorDescription: String? {
+        switch self {
+        case .invalidFormat(let message):
+            return message
         }
     }
 }

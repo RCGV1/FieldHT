@@ -1,0 +1,9 @@
+# Xcode user/workspace state
+*.xcuserstate
+xcuserdata/
+**/xcuserdata/
+
+# Python bytecode
+__pycache__/
+**/__pycache__/
+*.pyc

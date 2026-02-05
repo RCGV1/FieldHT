@@ -16,18 +16,55 @@ public class SettingsViewModel: ObservableObject {
     @Published public var errorMessage: String?
     @Published public var isSaving: Bool = false
     
+    // PF (Programmable Function) settings
+    @Published public var pfConfig: PFConfig?
+    @Published public var isPFLoading: Bool = false
+    @Published public var pfErrorMessage: String?
+    @Published public var isPFSaving: Bool = false
+    @Published public var pfNoticeMessage: String?
+    @Published public var pfLockedSlots: Set<String> = []
+    @Published public var pfLastRedirect: PFRedirect?
+    
     private var radioController: RadioController?
     private var settingsTask: Task<Void, Never>?
     private var saveTask: Task<Void, Never>?
+    private var pfLoadTask: Task<Void, Never>?
+    private var pfSaveTask: Task<Void, Never>?
     private var eventHandler: (() -> Void)?
+
+    private struct LastPFEdit {
+        let buttonID: Int
+        let action: PFActionType
+        let effect: PFEffectType
+    }
+    private var lastPFEdit: LastPFEdit?
+
+    public struct PFRedirect: Equatable {
+        public let buttonID: Int
+        public let from: PFActionType
+        public let toButtonID: Int
+        public let to: PFActionType
+        public let effect: PFEffectType
+    }
     
     public init() {}
+
+#if DEBUG
+    private func logPFConfig(_ config: PFConfig, prefix: String) {
+        print("[PF] \(prefix) entries=\(config.pf.count)")
+        for (i, pf) in config.pf.enumerated() {
+            print("[PF] \(prefix) [\(i)] button=\(pf.buttonID) trigger=\(pf.action) (\(pf.action.rawValue)) effect=\(pf.effect) (\(pf.effect.rawValue))")
+        }
+    }
+#endif
     
     /// Set the radio controller and load settings
     public func setRadioController(_ controller: RadioController?) {
         print("SettingsViewModel: setRadioController called with \(controller == nil ? "nil" : "controller")")
-        // Cancel previous task
+        // Cancel previous tasks
         settingsTask?.cancel()
+        pfLoadTask?.cancel()
+        pfSaveTask?.cancel()
         eventHandler?()
         
         radioController = controller
@@ -37,6 +74,7 @@ public class SettingsViewModel: ObservableObject {
             observeSettingsChanges(controller)
         } else {
             settings = nil
+            pfConfig = nil
             print("SettingsViewModel: Controller is nil, settings cleared")
         }
     }
@@ -353,6 +391,445 @@ public class SettingsViewModel: ObservableObject {
         guard var current = settings else { return }
         current.doubleChannel = value
         updateSettings(current)
+    }
+    
+    // MARK: - PF (Programmable Function) Settings
+    
+    /// Load PF configuration from the radio
+    public func loadPFConfig() {
+        guard let radioController = radioController else {
+            pfErrorMessage = "Not connected to radio"
+            return
+        }
+        
+        isPFLoading = true
+        pfErrorMessage = nil
+        pfNoticeMessage = nil
+        pfLockedSlots = []
+        pfLastRedirect = nil
+        
+        pfLoadTask = Task {
+            do {
+                let config = try await radioController.getPF()
+                 
+                await MainActor.run {
+                    self.pfConfig = config
+                    self.isPFLoading = false
+                    self.pfErrorMessage = nil
+                    self.pfNoticeMessage = nil
+                    let buttonCount = Set(config.pf.map { $0.buttonID }).count
+                    print("SettingsViewModel: Successfully loaded PF config (entries=\(config.pf.count), buttons=\(buttonCount))")
+#if DEBUG
+                    self.logPFConfig(config, prefix: "RX")
+#endif
+                }
+            } catch {
+                await MainActor.run {
+                    self.isPFLoading = false
+                    self.pfErrorMessage = "Failed to load PF config: \(error.localizedDescription)"
+                    print("SettingsViewModel: Failed to load PF config: \(error)")
+                }
+            }
+        }
+    }
+    
+    /// Update a specific PF button configuration
+    public func updatePFButton(buttonID: Int, action: PFActionType, effect: PFEffectType) {
+        guard let config = pfConfig else {
+            pfErrorMessage = "PF config not loaded"
+            return
+        }
+
+        var updatedPF = config.pf
+
+        // Firmware variance:
+        // "Short press" may be stored under different PFActionType slots depending on firmware.
+        // IMPORTANT: Some radios expose both `.shortSingle` and edge-trigger slots (eg `.lowToHigh`).
+        // Treat them as distinct. Only update ONE existing short-press slot per button:
+        // prefer `.shortSingle` when present, else fall back to other known variants.
+        // Never grow/repack the PF table (order and size are often device-defined).
+        var editedAction = action
+
+        if action == .shortSingle {
+            // Do NOT fall back to edge-trigger slots (eg `.lowToHigh`).
+            // Some firmwares expose both a short-press slot and edge-trigger slots; treating them
+            // as interchangeable causes accidental clobbering.
+            let candidates: [PFActionType] = [.shortSingle, .short, .invalid]
+
+            guard let chosen = candidates.first(where: { candidate in
+                updatedPF.contains(where: { $0.buttonID == buttonID && $0.action == candidate })
+            }) else {
+                pfErrorMessage = "This radio didn't expose a Short Press slot for button \(buttonID)"
+                return
+            }
+
+            editedAction = chosen
+
+            let indices = updatedPF.indices.filter { updatedPF[$0].buttonID == buttonID && updatedPF[$0].action == chosen }
+            for idx in indices {
+                updatedPF[idx] = PF(buttonID: buttonID, action: chosen, effect: effect)
+            }
+        } else {
+            // IMPORTANT: Many radios treat the PF table as fixed-size and/or order-dependent.
+            // Never grow the array (appending can cause the device to ignore new entries).
+            if let index = updatedPF.firstIndex(where: { $0.buttonID == buttonID && $0.action == action }) {
+                updatedPF[index] = PF(buttonID: buttonID, action: action, effect: effect)
+            } else {
+                // Avoid guessing/repacking slots for triggers the radio didn't expose.
+                pfErrorMessage = "This radio didn't expose a slot for \(triggerName(action)) on button \(buttonID)"
+                return
+            }
+        }
+        
+        // Create new config
+        let newConfig = PFConfig(pf: updatedPF)
+
+        // Track the last edit so we can mark firmware-locked slots.
+        lastPFEdit = LastPFEdit(buttonID: buttonID, action: editedAction, effect: effect)
+        
+        // Optimistic update
+        self.pfConfig = newConfig
+        
+        // Save immediately
+        savePFConfig(newConfig)
+    }
+    
+    /// Save PF configuration to the radio
+    private func savePFConfig(_ config: PFConfig) {
+        guard let radioController = radioController else {
+            pfErrorMessage = "Not connected to radio"
+            return
+        }
+        
+        // Cancel previous save task
+        pfSaveTask?.cancel()
+        
+        isPFSaving = true
+        pfErrorMessage = nil
+        pfNoticeMessage = nil
+        pfLastRedirect = nil
+        
+        pfSaveTask = Task {
+            do {
+#if DEBUG
+                await MainActor.run {
+                    self.logPFConfig(config, prefix: "TX")
+                }
+#endif
+                try await radioController.setPF(config)
+
+                // Read-back verification (keeps UI in sync with device-defined slots)
+                // Some firmwares apply PF writes asynchronously and/or normalize entries.
+                // Poll until results stabilize to avoid transient diffs.
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                let verified = try await self.readPFStable(radioController, timeoutNanoseconds: 2_000_000_000)
+
+                await MainActor.run {
+                    self.pfConfig = verified
+                    self.isPFSaving = false
+                    print("SettingsViewModel: Successfully saved PF config")
+                    let diffs = self.pfDiffs(expected: config, verified: verified)
+                    if !diffs.isEmpty {
+                        self.pfNoticeMessage = self.formatPFDiffNotice(diffs, expected: config, verified: verified)
+                    }
+
+                    // If the last edited slot didn't stick, try to detect a firmware "redirect".
+                    // Only mark the slot as locked when we have no evidence that the requested
+                    // effect landed anywhere new.
+                    if let edit = self.lastPFEdit {
+                        let verifiedEditedEffects = verified.pf
+                            .filter { $0.buttonID == edit.buttonID && $0.action == edit.action }
+                            .map { $0.effect }
+
+                        if verifiedEditedEffects.contains(edit.effect) {
+                            // The edit stuck as-written.
+                        } else if let redirected = self.redirectedAction(
+                            buttonID: edit.buttonID,
+                            desired: edit.effect,
+                            editedAction: edit.action,
+                            expected: config,
+                            verified: verified
+                        ) {
+                            self.pfLastRedirect = PFRedirect(
+                                buttonID: edit.buttonID,
+                                from: edit.action,
+                                toButtonID: edit.buttonID,
+                                to: redirected,
+                                effect: edit.effect
+                            )
+                        } else if let landed = self.findLandingSlotAnyButton(desired: edit.effect, expected: config, verified: verified) {
+                            self.pfLastRedirect = PFRedirect(
+                                buttonID: edit.buttonID,
+                                from: edit.action,
+                                toButtonID: landed.buttonID,
+                                to: landed.action,
+                                effect: edit.effect
+                            )
+                        } else {
+                            self.pfLockedSlots.insert(self.pfSlotKey(buttonID: edit.buttonID, action: edit.action))
+                        }
+                    }
+#if DEBUG
+                    self.logPFDiff(diffs)
+#endif
+                }
+            } catch {
+                await MainActor.run {
+                    self.isPFSaving = false
+                    self.pfErrorMessage = "Failed to save PF config: \(error.localizedDescription)"
+                    print("SettingsViewModel: Failed to save PF config: \(error)")
+                    
+                    // Reload on failure to revert optimistic update
+                    self.loadPFConfig()
+                }
+            }
+        }
+    }
+
+#if DEBUG
+    private func logPFDiff(_ diffs: [PFDiff]) {
+        if diffs.isEmpty {
+            print("[PF] Verify OK (no diffs)")
+            return
+        }
+
+        print("[PF] Verify diffs=\(diffs.count)")
+        for diff in diffs {
+            let expStr = diff.expected.isEmpty ? "<missing>" : diff.expected.map { "\($0) (\($0.rawValue))" }.joined(separator: ", ")
+            let verStr = diff.verified.isEmpty ? "<missing>" : diff.verified.map { "\($0) (\($0.rawValue))" }.joined(separator: ", ")
+            print("[PF] DIFF b=\(diff.buttonID) a=\(diff.action.rawValue) expected=\(expStr) verified=\(verStr)")
+        }
+    }
+#endif
+
+    private struct PFDiff {
+        let buttonID: Int
+        let action: PFActionType
+        let expected: [PFEffectType]
+        let verified: [PFEffectType]
+    }
+
+    private func pfDiffs(expected: PFConfig, verified: PFConfig) -> [PFDiff] {
+        struct Key: Hashable {
+            let buttonID: Int
+            let actionRaw: Int
+        }
+
+        func key(_ pf: PF) -> Key {
+            Key(buttonID: pf.buttonID, actionRaw: pf.action.rawValue)
+        }
+
+        func group(_ pfs: [PF]) -> [Key: [PFEffectType]] {
+            var out: [Key: [PFEffectType]] = [:]
+            for pf in pfs {
+                out[key(pf), default: []].append(pf.effect)
+            }
+
+            // Stabilize comparisons (device may reorder entries with same key).
+            for k in out.keys {
+                out[k]?.sort { $0.rawValue < $1.rawValue }
+            }
+            return out
+        }
+
+        let expectedByKey = group(expected.pf)
+        let verifiedByKey = group(verified.pf)
+
+        let allKeys = Set(expectedByKey.keys).union(verifiedByKey.keys)
+        var diffs: [PFDiff] = []
+        diffs.reserveCapacity(allKeys.count)
+
+        for k in allKeys {
+            let exp = expectedByKey[k] ?? []
+            let ver = verifiedByKey[k] ?? []
+            if exp != ver {
+                let action = PFActionType(rawValue: k.actionRaw) ?? .invalid
+                diffs.append(PFDiff(buttonID: k.buttonID, action: action, expected: exp, verified: ver))
+            }
+        }
+
+        diffs.sort {
+            if $0.buttonID != $1.buttonID { return $0.buttonID < $1.buttonID }
+            return $0.action.rawValue < $1.action.rawValue
+        }
+        return diffs
+    }
+
+    private func formatPFDiffNotice(_ diffs: [PFDiff], expected: PFConfig, verified: PFConfig) -> String {
+        let count = diffs.count
+        let shown = diffs.prefix(3).map { diff in
+            let actionName = triggerName(diff.action)
+            let expectedEffect = diff.expected.first
+            let verifiedEffect = diff.verified.first
+
+            let expectedName = expectedEffect.map(effectName) ?? "<missing>"
+            let verifiedName = verifiedEffect.map(effectName) ?? "<missing>"
+
+            var extra: String = ""
+            if let desired = expectedEffect {
+                if let redirected = redirectedAction(buttonID: diff.buttonID, desired: desired, editedAction: diff.action, expected: expected, verified: verified) {
+                    extra = " (saved as \(triggerName(redirected)))"
+                } else if verifiedEffect != desired {
+                    extra = " (rejected by firmware)"
+                }
+            }
+
+            return "Button ID \(diff.buttonID) \(actionName): \(expectedName) -> \(verifiedName)\(extra)"
+        }
+        let suffix = count > 3 ? " (+\(count - 3) more)" : ""
+        return "Radio adjusted PF mappings after save. " + shown.joined(separator: " | ") + suffix
+    }
+
+    private func redirectedAction(buttonID: Int, desired: PFEffectType, editedAction: PFActionType, expected: PFConfig, verified: PFConfig) -> PFActionType? {
+        // If the radio ignores a slot but applies the requested effect to a different slot
+        // for the same button, surface where it actually landed.
+        // To reduce false-positives, require that the landing slot changed compared to `expected`.
+        let expectedByAction: [Int: PFEffectType] = Dictionary(
+            expected.pf
+                .filter { $0.buttonID == buttonID }
+                .map { ($0.action.rawValue, $0.effect) },
+            uniquingKeysWith: { a, _ in a }
+        )
+
+        let verifiedForButton = verified.pf.filter { $0.buttonID == buttonID }
+        let candidates = verifiedForButton
+            .filter { $0.action != editedAction && $0.effect == desired }
+            .sorted { $0.action.rawValue < $1.action.rawValue }
+
+        for candidate in candidates {
+            let prior = expectedByAction[candidate.action.rawValue]
+            if prior != desired {
+                return candidate.action
+            }
+        }
+        return nil
+    }
+
+    private func pfSlotKey(buttonID: Int, action: PFActionType) -> String {
+        "b=\(buttonID) a=\(action.rawValue)"
+    }
+
+    private nonisolated func pfSignature(_ config: PFConfig) -> String {
+        struct Key: Hashable {
+            let buttonID: Int
+            let actionRaw: Int
+        }
+
+        var grouped: [Key: [Int]] = [:]
+        for pf in config.pf {
+            let k = Key(buttonID: pf.buttonID, actionRaw: pf.action.rawValue)
+            grouped[k, default: []].append(pf.effect.rawValue)
+        }
+
+        return grouped
+            .map { (k, effects) in
+                let effectStr = effects.sorted().map(String.init).joined(separator: ",")
+                return "\(k.buttonID):\(k.actionRaw)=\(effectStr)"
+            }
+            .sorted()
+            .joined(separator: "|")
+    }
+
+    private nonisolated func readPFStable(
+        _ radioController: RadioController,
+        timeoutNanoseconds: UInt64,
+        pollEveryNanoseconds: UInt64 = 250_000_000,
+        requiredRepeats: Int = 1
+    ) async throws -> PFConfig {
+        let start = DispatchTime.now().uptimeNanoseconds
+
+        var lastSig: String?
+        var repeats = 0
+        var lastConfig: PFConfig?
+
+        while DispatchTime.now().uptimeNanoseconds - start < timeoutNanoseconds {
+            let cfg = try await radioController.getPF()
+            let sig = pfSignature(cfg)
+
+            if sig == lastSig {
+                repeats += 1
+                if repeats >= requiredRepeats {
+                    return cfg
+                }
+            } else {
+                lastSig = sig
+                repeats = 0
+            }
+
+            lastConfig = cfg
+            try? await Task.sleep(nanoseconds: pollEveryNanoseconds)
+        }
+
+        if let lastConfig {
+            return lastConfig
+        }
+        return try await radioController.getPF()
+    }
+
+    private struct LandingSlot {
+        let buttonID: Int
+        let action: PFActionType
+    }
+
+    private func findLandingSlotAnyButton(desired: PFEffectType, expected: PFConfig, verified: PFConfig) -> LandingSlot? {
+        // Find a slot where the desired effect appears in the verified config but was NOT present
+        // in the same slot of the expected config.
+        // This helps identify firmware "redirects" that spill into other buttons/triggers.
+        for pf in verified.pf {
+            guard pf.effect == desired else { continue }
+            if let expectedMatch = expected.pf.first(where: { $0.buttonID == pf.buttonID && $0.action == pf.action }) {
+                if expectedMatch.effect == desired {
+                    continue
+                }
+            }
+
+            return LandingSlot(buttonID: pf.buttonID, action: pf.action)
+        }
+        return nil
+    }
+
+    private func effectName(_ effect: PFEffectType) -> String {
+        switch effect {
+        case .disable: return "Disable"
+        case .alarm: return "Alarm"
+        case .alarmAndMute: return "Alarm+Mute"
+        case .toggleOffline: return "Offline"
+        case .toggleRadioTx: return "Radio TX"
+        case .toggleTxPower: return "TX Power"
+        case .toggleFM: return "FM"
+        case .prevChannel: return "Prev Ch"
+        case .nextChannel: return "Next Ch"
+        case .tCall: return "T-Call"
+        case .prevRegion: return "Prev Region"
+        case .nextRegion: return "Next Region"
+        case .toggleChScan: return "Ch Scan"
+        case .mainPTT: return "Main PTT"
+        case .subPTT: return "Sub PTT"
+        case .toggleMonitor: return "Monitor"
+        case .btPairing: return "BT Pair"
+        case .toggleDoubleCh: return "Double Ch"
+        case .toggleABCh: return "A/B"
+        case .sendLocation: return "Send Loc"
+        case .oneClickLink: return "One Click"
+        case .volDown: return "Vol-"
+        case .volUp: return "Vol+"
+        case .toggleMute: return "Mute"
+        }
+    }
+
+    private func triggerName(_ action: PFActionType) -> String {
+        switch action {
+        case .invalid, .shortSingle:
+            return "Short Press"
+        case .double:
+            return "Double Press"
+        case .long:
+            return "Long Press"
+        case .lowToHigh:
+            return "Press Down"
+        default:
+            return "Trigger \(action.rawValue)"
+        }
     }
 }
 

@@ -10,9 +10,22 @@
 		BC9B55C22F0B036400429275 /* FieldHT.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FieldHT.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		BC7026C72F0F5A9900149E20 /* Exceptions for "FieldHT" folder in "FieldHT" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = BC9B55C12F0B036400429275 /* FieldHT */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		BC9B55C42F0B036400429275 /* FieldHT */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				BC7026C72F0F5A9900149E20 /* Exceptions for "FieldHT" folder in "FieldHT" target */,
+			);
 			path = FieldHT;
 			sourceTree = "<group>";
 		};
@@ -256,7 +269,9 @@
 				DEVELOPMENT_TEAM = FRFXFRT624;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FieldHT/Info.plist;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "We need Bluetooth to connect to your radio";
+				INFOPLIST_KEY_NSBluetoothWhileInUseUsageDescription = "We need Bluetooth to connect to your radio";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -289,7 +304,9 @@
 				DEVELOPMENT_TEAM = FRFXFRT624;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FieldHT/Info.plist;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "We need Bluetooth to connect to your radio";
+				INFOPLIST_KEY_NSBluetoothWhileInUseUsageDescription = "We need Bluetooth to connect to your radio";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

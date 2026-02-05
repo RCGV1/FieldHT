@@ -63,8 +63,14 @@ public class RadioController: ObservableObject {
     
     /// Connect to the radio
     public func connect() async throws {
-        try await connection.connect()
-        try await hydrate()
+        do {
+            try await connection.connect()
+            try await hydrate()
+        } catch {
+            // Ensure a failed connect attempt doesn't leave the transport half-open.
+            await disconnect()
+            throw error
+        }
     }
     
     /// Disconnect from the radio
@@ -109,27 +115,20 @@ public class RadioController: ObservableObject {
     
     /// Lightweight hydration for just channels and region names
     @discardableResult
-    public func hydrateChannels(deviceInfo: DeviceInfo? = nil, status: Status? = nil) async throws -> [String] {
+    public func hydrateChannels(deviceInfo: DeviceInfo? = nil, status: Status? = nil, regionID: Int? = nil) async throws -> [String] {
         let activeDeviceInfo = deviceInfo ?? self.deviceInfo
-        let activeStatus = status ?? self.status
+        var activeStatus = status ?? self.status
         
-        let currentRegion = activeStatus.currRegion
+        let currentRegion = regionID ?? activeStatus.currRegion
+        activeStatus.currRegion = currentRegion
         var regionDict: [Int: Channel] = [:]
         
         // Load region memory slots
-        var validChannelCount = 0
         let maxChannelsToLoad = min(30, activeDeviceInfo.channelCount)
-        
-        for i in 0..<activeDeviceInfo.channelCount {
+        for i in 0..<maxChannelsToLoad {
             let channel = try await connection.getChannel(i)
             
             regionDict[channel.channelID] = channel
-            
-            if channel.rxFreq > 0 {
-                validChannelCount += 1
-            }
-            
-            
         }
         
         // Explicitly load VFO channels (ids 252, 251)
@@ -168,6 +167,17 @@ public class RadioController: ObservableObject {
         }
         
         return regionNames
+    }
+
+    private func pollStatusUntilRegionMatches(_ regionID: Int, timeoutNanoseconds: UInt64 = 2_000_000_000, pollEveryNanoseconds: UInt64 = 200_000_000) async -> Status? {
+        let start = DispatchTime.now().uptimeNanoseconds
+        while DispatchTime.now().uptimeNanoseconds - start < timeoutNanoseconds {
+            if let status = try? await connection.getStatus(), status.currRegion == regionID {
+                return status
+            }
+            try? await Task.sleep(nanoseconds: pollEveryNanoseconds)
+        }
+        return try? await connection.getStatus()
     }
     
     /// Handle incoming events
@@ -323,16 +333,97 @@ public class RadioController: ObservableObject {
         guard regionID < currentState.deviceInfo.regionCount else {
             throw RadioError.invalidChannelID // reusing error or make new one
         }
-        
-        try await connection.setRegionName(regionID, name: name)
-        
+
+        #if DEBUG
+        let regionCount = currentState.deviceInfo.regionCount
+        let priorRegion = currentState.status.currRegion
+        var beforeNames: [String] = []
+        if regionCount > 0 {
+            do {
+                beforeNames = []
+                for i in 0..<regionCount {
+                    beforeNames.append(try await connection.getRegionName(i))
+                }
+                print("[REGION-RENAME] Before: \(beforeNames.enumerated().map { "\($0.offset):\($0.element)" }.joined(separator: ", "))")
+            } catch {
+                print("[REGION-RENAME] Warning: failed to read names before rename: \(error)")
+                beforeNames = []
+            }
+        }
+        #endif
+
+        // Try name-only write FIRST (safer - only affects the name, no region config side effects)
+        // Then fall back to "write with region ID" if needed
+        do {
+            try await connection.setCurrentRegionName(name)
+        } catch {
+            #if DEBUG
+            print("[REGION-RENAME] Name-only write failed (\(error)); trying write with region ID")
+            // Fallback: write with region ID included
+            do {
+                try await connection.setRegionName(regionID, name: name)
+            } catch {
+                #if DEBUG
+                print("[REGION-RENAME] Region+name write also failed (\(error)); trying switch+name-only path")
+                // Last resort: switch to target region, write name-only, restore
+                do {
+                    if priorRegion != regionID {
+                        try await connection.setRegion(regionID)
+                        try await Task.sleep(nanoseconds: 250_000_000)
+                    }
+                    try await connection.setCurrentRegionName(name)
+                    if priorRegion != regionID {
+                        try await connection.setRegion(priorRegion)
+                        try await Task.sleep(nanoseconds: 250_000_000)
+                    }
+                } catch {
+                    print("[REGION-RENAME] All paths failed (\(error))")
+                    throw error
+                }
+                #else
+                throw error
+                #endif
+            }
+            #else
+            throw error
+            #endif
+        }
+
+        #if DEBUG
+        if regionCount > 0 {
+            do {
+                var afterNames: [String] = []
+                for i in 0..<regionCount {
+                    afterNames.append(try await connection.getRegionName(i))
+                }
+
+                if !beforeNames.isEmpty, beforeNames.count == afterNames.count {
+                    let changed = zip(beforeNames, afterNames)
+                        .enumerated()
+                        .compactMap { idx, pair in pair.0 == pair.1 ? nil : idx }
+                    print("[REGION-RENAME] Changed indices: \(changed)")
+                }
+                print("[REGION-RENAME] After: \(afterNames.enumerated().map { "\($0.offset):\($0.element)" }.joined(separator: ", "))")
+
+                currentState.regionNames = afterNames
+            } catch {
+                print("[REGION-RENAME] Warning: failed to read names after rename: \(error)")
+                var newRegions = currentState.regionNames
+                if regionID < newRegions.count {
+                    newRegions[regionID] = name
+                }
+                currentState.regionNames = newRegions
+            }
+        }
+        #else
         // Update local state
         var newRegions = currentState.regionNames
         if regionID < newRegions.count {
             newRegions[regionID] = name
         }
-        
         currentState.regionNames = newRegions
+        #endif
+
         await MainActor.run {
             self.state = currentState
         }
@@ -349,7 +440,13 @@ public class RadioController: ObservableObject {
         }
         
         try await connection.setRegion(regionID)
-        // Note: setting region might change status, but we wait for event or next poll
+
+        // Give the radio a moment to apply the change, then confirm via status poll.
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        let updatedStatus = await pollStatusUntilRegionMatches(regionID)
+
+        // Hydrate channels explicitly for the target region, independent of any delayed status event.
+        _ = try await hydrateChannels(deviceInfo: currentState.deviceInfo, status: updatedStatus, regionID: regionID)
     }
     
     /// Assign channel to region
@@ -369,6 +466,16 @@ public class RadioController: ObservableObject {
     @discardableResult
     public func addEventHandler(_ handler: @escaping EventHandler) -> () -> Void {
         return connection.addEventHandler(handler)
+    }
+    
+    /// Get PF configuration
+    public func getPF() async throws -> PFConfig {
+        return try await connection.getPF()
+    }
+    
+    /// Set PF configuration
+    public func setPF(_ config: PFConfig) async throws {
+        try await connection.setPF(config)
     }
 }
 
@@ -420,5 +527,3 @@ public enum RadioError: LocalizedError {
         }
     }
 }
-
-

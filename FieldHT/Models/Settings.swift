@@ -39,7 +39,6 @@ public struct Settings: Codable, Equatable {
     public var disDigitalMute: Bool
     public var signalingEccEn: Bool
     public var chDataLock: Bool
-// Revert field names
     public var vfo1ModFreqX: Int
     public var vfo2ModFreqX: Int
     public var reservedExt1: Int // Unknown 2 bytes at end

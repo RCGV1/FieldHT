@@ -17,6 +17,17 @@ public class RadioManager: ObservableObject {
     @Published public var isConnected: Bool = false
     @Published public var connectionError: String?
     @Published public var isConnecting: Bool = false
+    @Published public var isAutoReconnecting: Bool = false
+    @Published public var autoReconnectEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(autoReconnectEnabled, forKey: autoReconnectEnabledKey)
+            if !autoReconnectEnabled {
+                reconnectTask?.cancel()
+                reconnectTask = nil
+                isAutoReconnecting = false
+            }
+        }
+    }
     
     // Derived Radio State (Convenience for UI Binding)
     // These properties forward values from radioController?.state
@@ -59,37 +70,108 @@ public class RadioManager: ObservableObject {
     @Published public var errorMessage: String?
     
     private var connectionTask: Task<Void, Never>?
+    private var reconnectTask: Task<Void, Never>?
     private var timer: Timer?
     private var cancellables = Set<AnyCancellable>()
+
+    // Reuse the underlying transport/controller across reconnect attempts to avoid
+    // recreating CoreBluetooth managers repeatedly (can lead to XPC invalid loops).
+    private var connectionController: RadioController?
+    private var connectionControllerDeviceUUID: UUID?
+
+    private let lastPairedDeviceKey = "com.fieldHT.lastPairedDeviceUUID"
+    private let autoReconnectEnabledKey = "com.fieldHT.autoReconnectEnabled"
+    private var reconnectAttempt: Int = 0
+
+    private let maxAutoReconnectAttempts: Int = 6
+    private let maxAutoReconnectTotalSeconds: TimeInterval = 90
     
-    public init() {}
+    public init() {
+        if UserDefaults.standard.object(forKey: autoReconnectEnabledKey) == nil {
+            UserDefaults.standard.set(true, forKey: autoReconnectEnabledKey)
+        }
+        self.autoReconnectEnabled = UserDefaults.standard.bool(forKey: autoReconnectEnabledKey)
+
+        if autoReconnectEnabled, let lastUUID = lastPairedDeviceUUID {
+            startAutoReconnect(to: lastUUID)
+        }
+    }
+
+    public var lastPairedDeviceUUID: UUID? {
+        get {
+            guard let uuidString = UserDefaults.standard.string(forKey: lastPairedDeviceKey),
+                  let uuid = UUID(uuidString: uuidString) else {
+                return nil
+            }
+            return uuid
+        }
+        set {
+            if let uuid = newValue {
+                UserDefaults.standard.set(uuid.uuidString, forKey: lastPairedDeviceKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: lastPairedDeviceKey)
+            }
+        }
+    }
     
     /// Connect to a radio device
     public func connect(to deviceUUID: UUID) {
         guard !isConnecting && !isConnected else { return }
+
+        // A user action implies we should keep trying to stay connected.
+        autoReconnectEnabled = true
+        lastPairedDeviceUUID = deviceUUID
         
         isConnecting = true
         connectionError = nil
+
+        // If an auto-reconnect loop is running, let it drive future attempts.
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        isAutoReconnecting = false
+        reconnectAttempt = 0
         
         connectionTask = Task {
             do {
-                let radio = RadioController.newBLE(deviceUUID: deviceUUID, radioManager: self)
+                if let existing = self.connectionController,
+                   let existingUUID = self.connectionControllerDeviceUUID,
+                   existingUUID != deviceUUID {
+                    // Switching devices: tear down the prior controller before reusing state.
+                    await existing.disconnect()
+                    self.connectionController = nil
+                    self.connectionControllerDeviceUUID = nil
+                }
+
+                let controller = self.connectionController ?? RadioController.newBLE(deviceUUID: deviceUUID, radioManager: self)
+                self.connectionController = controller
+                self.connectionControllerDeviceUUID = deviceUUID
+
                 // Subscribe to changes from the controller before connecting
-                subscribeToRadio(radio)
-                
-                try await radio.connect()
-                
-                self.radioController = radio
+                subscribeToRadio(controller)
+
+                try await controller.connect()
+
+                self.radioController = controller
                 self.isConnected = true
                 self.isConnecting = false
                 
                 // Start polling for battery
                 startPolling()
             } catch {
+                if error is CancellationError {
+                    self.connectionError = nil
+                    self.isConnecting = false
+                    self.radioController = nil
+                    self.cancellables.removeAll()
+                    return
+                }
+
                 self.connectionError = error.localizedDescription
                 self.isConnecting = false
                 self.radioController = nil
                 self.cancellables.removeAll()
+
+                startAutoReconnect(to: deviceUUID)
             }
         }
     }
@@ -110,22 +192,161 @@ public class RadioManager: ObservableObject {
     
     /// Disconnect from the radio
     public func disconnect() {
+        // A user action implies we should stop trying to reconnect.
+        autoReconnectEnabled = false
+
         connectionTask?.cancel()
         connectionTask = nil
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        isAutoReconnecting = false
+        reconnectAttempt = 0
+
         stopPolling()
         cancellables.removeAll()
         
         Task {
-            if let radio = radioController {
-                await radio.disconnect()
+            let controller = connectionController ?? radioController
+            if let controller {
+                await controller.disconnect()
             }
             
             await MainActor.run {
+                self.connectionController = nil
+                self.connectionControllerDeviceUUID = nil
                 self.radioController = nil
                 self.isConnected = false
                 self.connectionError = nil
             }
         }
+    }
+
+    /// Called by the BLE layer when the transport drops unexpectedly.
+    /// This is intentionally lightweight and safe to call multiple times.
+    public func handleTransportDidDisconnect(error: Error?) {
+        // Prevent an in-flight connect task from racing with the disconnect callback.
+        connectionTask?.cancel()
+        connectionTask = nil
+
+        stopPolling()
+        cancellables.removeAll()
+
+        radioController = nil
+        isConnected = false
+        isConnecting = false
+
+        if let error {
+            connectionError = error.localizedDescription
+        }
+
+        if autoReconnectEnabled, let uuid = lastPairedDeviceUUID {
+            startAutoReconnect(to: uuid)
+        }
+    }
+
+    private func startAutoReconnect(to deviceUUID: UUID) {
+        guard autoReconnectEnabled else { return }
+        guard !isConnected else { return }
+
+        // Avoid multiple loops.
+        if reconnectTask != nil { return }
+
+        isAutoReconnecting = true
+        reconnectAttempt = 0
+
+        let startedAt = Date()
+
+        reconnectTask = Task { [weak self] in
+            guard let self else { return }
+
+            while !Task.isCancelled {
+                if !self.autoReconnectEnabled {
+                    break
+                }
+                if self.isConnected {
+                    break
+                }
+                if self.isConnecting {
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    continue
+                }
+
+                let elapsed = Date().timeIntervalSince(startedAt)
+                if self.reconnectAttempt >= self.maxAutoReconnectAttempts || elapsed >= self.maxAutoReconnectTotalSeconds {
+                    self.connectionError = "Unable to reconnect. Tap Connect to try again."
+                    self.isConnecting = false
+                    self.radioController = nil
+                    self.cancellables.removeAll()
+                    // Stop the loop and persist that we're no longer auto-reconnecting.
+                    self.autoReconnectEnabled = false
+                    break
+                }
+
+                self.isConnecting = true
+                self.connectionError = nil
+
+                do {
+                    if let existing = self.connectionController,
+                       let existingUUID = self.connectionControllerDeviceUUID,
+                       existingUUID != deviceUUID {
+                        await existing.disconnect()
+                        self.connectionController = nil
+                        self.connectionControllerDeviceUUID = nil
+                    }
+
+                    let controller = self.connectionController ?? RadioController.newBLE(deviceUUID: deviceUUID, radioManager: self)
+                    self.connectionController = controller
+                    self.connectionControllerDeviceUUID = deviceUUID
+
+                    self.subscribeToRadio(controller)
+                    try await controller.connect()
+
+                    self.radioController = controller
+                    self.isConnected = true
+                    self.isConnecting = false
+                    self.isAutoReconnecting = false
+                    self.reconnectAttempt = 0
+                    self.startPolling()
+                    break
+                } catch {
+                    if error is CancellationError || Task.isCancelled {
+                        break
+                    }
+
+                    self.radioController = nil
+                    self.isConnected = false
+                    self.isConnecting = false
+                    self.cancellables.removeAll()
+
+                    self.connectionError = error.localizedDescription
+
+                    // If Bluetooth is unavailable, don't keep spinning.
+                    if let bleError = error as? BLEError, bleError == .bluetoothUnavailable {
+                        self.isConnecting = false
+                        self.radioController = nil
+                        self.cancellables.removeAll()
+                        self.autoReconnectEnabled = false
+                        break
+                    }
+
+                    let delaySeconds = self.nextReconnectDelaySeconds(attempt: self.reconnectAttempt)
+                    self.reconnectAttempt += 1
+                    try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+                }
+            }
+
+            await MainActor.run {
+                self.reconnectTask = nil
+                self.isAutoReconnecting = false
+            }
+        }
+    }
+
+    private func nextReconnectDelaySeconds(attempt: Int) -> Double {
+        // Exponential backoff with jitter, capped.
+        let base = min(pow(2.0, Double(min(attempt, 6))), 60.0) // 1,2,4,8,16,32,60...
+        let jitter = Double.random(in: 0...(base * 0.2))
+        return max(1.0, base + jitter)
     }
     
     // MARK: - Polling

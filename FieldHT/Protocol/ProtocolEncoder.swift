@@ -255,16 +255,28 @@ public struct ProtocolEncoder {
     
     public static func encodeWriteRegionName(regionID: Int, name: String) -> Data {
         var stream = BitStream()
+        // NOTE: UV-PRO firmware reply for readRegionName returns 10 name bytes.
+        // writeRegionName appears to accept a 10-byte name; some firmware also expects the
+        // regionID as the first byte (mirrors writeRegionCh / readRegionName conventions).
         stream.writeInt(regionID, bitCount: 8)
-        
-        // Name (16 bytes? assuming slightly longer than channel name or same)
-        // Let's assume 12 bytes to be safe, or just variable. 
-        // Based on channel name being 10, let's try 16.
         var nameData = name.data(using: .utf8) ?? Data()
-        if nameData.count > 16 {
-            nameData = nameData.prefix(16)
+        if nameData.count > 10 {
+            nameData = nameData.prefix(10)
         }
-        while nameData.count < 16 {
+        while nameData.count < 10 {
+            nameData.append(0)
+        }
+        stream.writeBytes(nameData)
+        return stream.toData()
+    }
+
+    public static func encodeWriteRegionNameNameOnly(_ name: String) -> Data {
+        var stream = BitStream()
+        var nameData = name.data(using: .utf8) ?? Data()
+        if nameData.count > 10 {
+            nameData = nameData.prefix(10)
+        }
+        while nameData.count < 10 {
             nameData.append(0)
         }
         stream.writeBytes(nameData)
@@ -291,5 +303,24 @@ public struct ProtocolEncoder {
         stream.writeInt(Int(eventType.rawValue), bitCount: 8)
         return stream.toData()
     }
-}
+    
+    // MARK: - PF Encoding
+    
+    public static func encodeGetPF() -> Data {
+        // GetPFBody is empty
+        return Data()
+    }
+    
+    public static func encodeSetPF(_ pfConfig: PFConfig) -> Data {
+        var stream = BitStream()
 
+        // UV-PRO firmware expects `setPF` as an effect-only table.
+        // The table order is device-defined and matches the order returned by `getPF`.
+        // Each entry is one byte: PFEffectType.
+        for pf in pfConfig.pf {
+            stream.writeInt(pf.effect.rawValue, bitCount: 8)
+        }
+        
+        return stream.toData()
+    }
+}

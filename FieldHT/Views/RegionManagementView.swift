@@ -2,14 +2,14 @@
 //  RegionManagementView.swift
 //  FieldHT
 //
-//  Created by Benjamin Faershtein on 12/14/25.
+//  Refactored for better SwiftUI experience
 //
 
 import SwiftUI
 
 struct RegionManagementView: View {
     @ObservedObject var viewModel: ChannelViewModel
-    @Environment(\.presentationMode) var presentationMode
+    @Environment(\.dismiss) private var dismiss
     
     @State private var editingRegionIndex: Int?
     @State private var editingName: String = ""
@@ -17,58 +17,105 @@ struct RegionManagementView: View {
     var body: some View {
         NavigationView {
             List {
-                ForEach(Array(viewModel.regions.enumerated()), id: \.offset) { index, name in
-                    HStack {
-                        if editingRegionIndex == index {
-                            TextField("Region Name", text: $editingName, onCommit: {
-                                saveRegionName(index: index)
-                            })
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                            
-                            Button(action: { saveRegionName(index: index) }) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.green)
-                            }
-                        } else {
-                            Button(action: {
-                                viewModel.setActiveRegion(index)
-                                presentationMode.wrappedValue.dismiss()
-                            }) {
-                                Text(name.isEmpty ? "Region \(index + 1)" : name)
-                                    .foregroundColor(.primary)
-                            }
-                            
-                            Spacer()
-                            
-                            Button(action: {
-                                startEditing(index: index, name: name)
-                            }) {
-                                Image(systemName: "pencil")
-                                    .foregroundColor(.blue)
-                            }
-                            .buttonStyle(BorderlessButtonStyle())
-                        }
-                    }
+                ForEach(0..<viewModel.regions.count, id: \.self) { index in
+                    regionRow(index: index, name: viewModel.regions[index])
                 }
             }
+            .listStyle(.insetGrouped)
             .navigationTitle("Memory Groups")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
-                        presentationMode.wrappedValue.dismiss()
+                        dismiss()
                     }
                 }
             }
         }
     }
     
-    private func startEditing(index: Int, name: String) {
+    @ViewBuilder
+    private func regionRow(index: Int, name: String) -> some View {
+        if editingRegionIndex == index {
+            editingRow(index: index)
+        } else {
+            displayRow(index: index, name: name)
+        }
+    }
+    
+    private func displayRow(index: Int, name: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "folder.fill")
+                .foregroundColor(.orange)
+                .font(.body)
+            
+            Text(name.isEmpty ? "Memory Group \(index + 1)" : name)
+                .font(.body)
+                .foregroundColor(.primary)
+            
+            Spacer()
+            
+            Button {
+                startEditing(index: index)
+            } label: {
+                Image(systemName: "pencil")
+                    .foregroundColor(.blue)
+                    .font(.body)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 4)
+    }
+    
+    private func editingRow(index: Int) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "pencil.circle.fill")
+                .foregroundColor(.blue)
+                .font(.title3)
+            
+            TextField("Memory Group Name", text: $editingName)
+                .textFieldStyle(.plain)
+                .font(.body)
+                .autocorrectionDisabled()
+                .textContentType(.name)
+            
+            Spacer()
+            
+            Button {
+                saveRegionName(index: index)
+            } label: {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
+                    .font(.title2)
+            }
+            .buttonStyle(.plain)
+            
+            Button {
+                cancelEditing()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundColor(.secondary)
+                    .font(.title2)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 4)
+    }
+    
+    private func startEditing(index: Int) {
         editingRegionIndex = index
-        editingName = name
+        editingName = viewModel.regions.indices.contains(index) ? viewModel.regions[index] : ""
+    }
+    
+    private func cancelEditing() {
+        editingRegionIndex = nil
+        editingName = ""
     }
     
     private func saveRegionName(index: Int) {
-        viewModel.renameRegion(index, name: editingName)
+        let nameToSave = editingName.trimmingCharacters(in: .whitespacesAndNewlines)
+        viewModel.renameRegion(index, name: nameToSave)
         editingRegionIndex = nil
+        editingName = ""
     }
 }

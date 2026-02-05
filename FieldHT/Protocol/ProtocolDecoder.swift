@@ -480,6 +480,39 @@ public struct ProtocolDecoder {
     public static func decodeRegionName(_ data: Data) throws -> String {
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? ""
     }
+    
+    // MARK: - PF Decoding
+    
+    public static func decodePF(_ data: Data) throws -> PFConfig {
+        var stream = BitStream(data: data)
+        
+        // Skip reply_status byte (8 bits)
+        _ = try stream.readInt(8)
+
+        // Decode PF entries (16 bits per entry: 4 + 4 + 8)
+        if stream.remaining % 16 != 0 {
+            print("[PROTOCOL-WARN] PF payload not aligned to 16-bit entries. Remaining bits: \(stream.remaining)")
+        }
+
+        var pfArray: [PF] = []
+        while stream.remaining >= 16 {
+            let buttonID = try stream.readInt(4)
+            let actionRaw = try stream.readInt(4)
+            let effectRaw = try stream.readInt(8)
+
+            guard let action = PFActionType(rawValue: actionRaw) else {
+                throw ProtocolError.decodeError("Invalid PFActionType: \(actionRaw)")
+            }
+
+            guard let effect = PFEffectType(rawValue: effectRaw) else {
+                throw ProtocolError.decodeError("Invalid PFEffectType: \(effectRaw)")
+            }
+
+            pfArray.append(PF(buttonID: buttonID, action: action, effect: effect))
+        }
+
+        return PFConfig(pf: pfArray)
+    }
 }
 
 /// Protocol message structure
