@@ -97,14 +97,14 @@ final class N2YOClient {
             return env
         }
 
-        // 2) Keychain/UserDefaults (in-app entry). UserDefaults value is migrated to Keychain.
-        if let stored = N2YOAPIKeyStore.get() {
-            return stored
-        }
-
-        // 3) Info.plist (avoid committing real keys)
+        // 2) Info.plist / build setting (recommended for release)
         if let plist = (Bundle.main.object(forInfoDictionaryKey: "N2YO_API_KEY") as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !plist.isEmpty {
             return plist
+        }
+
+        // 3) Keychain/UserDefaults (in-app entry). UserDefaults value is migrated to Keychain.
+        if let stored = N2YOAPIKeyStore.get() {
+            return stored
         }
 
         throw N2YOClientError.missingAPIKey
