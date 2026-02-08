@@ -10,6 +10,9 @@ public let radioWriteUUID = CBUUID(string: "00001101-d102-11e1-9b23-00025b00a5a5
 /// BLE Indicate Characteristic UUID
 public let radioIndicateUUID = CBUUID(string: "00001102-d102-11e1-9b23-00025b00a5a5")
 
+/// BLE Auxiliary Characteristic UUID (observed in official app strings; purpose unknown)
+public let radioAuxUUID = CBUUID(string: "00001103-d102-11e1-9b23-00025b00a5a5")
+
 public let radioPairingUUID = CBUUID(string: "88A1")
 
 /// Command groups
@@ -76,6 +79,10 @@ public enum BasicCommand: UInt16 {
     case setDevID = 74
     case getPFActions = 75
     case getPosition = 76
+
+    // Observed in UV-PRO BLE logs while using satellite tracking mode.
+    // Body appears to be: 20-byte name + 5x UInt16 (range/shift/az/el/alt).
+    case satModeSetInfo = 77
     case eventNotification = 9
 }
 
@@ -108,4 +115,3 @@ public enum EventType: UInt8 {
     case dataTxd = 12             // DATA_TXD
     case positionChanged = 13     // POSITION_CHANGE
 }
-

@@ -308,6 +308,44 @@ public class RadioController: ObservableObject {
             self.state = currentState
         }
     }
+
+    // MARK: - Satellite mode (reverse-engineered)
+
+    public func setFreqModeParameters(
+        rxMHz: Double,
+        txMHz: Double,
+        rxSubAudio: SubAudio? = nil,
+        txSubAudio: SubAudio? = nil
+    ) async throws {
+        let rxHzX = UInt32(max(0, Int((rxMHz * 1_000_000.0).rounded())))
+        let txHzX = UInt32(max(0, Int((txMHz * 1_000_000.0).rounded())))
+        try await connection.setFreqModeParameters(
+            rxFreqHzX: rxHzX,
+            txFreqHzX: txHzX,
+            rxSubAudio: rxSubAudio,
+            txSubAudio: txSubAudio
+        )
+        // Observed in BLE logs: firmware expects a follow-up status read (cmd 36).
+        try await connection.getFreqModeStatus()
+    }
+
+    public func setSatModeInfo(
+        name: String,
+        rangeKm: Double,
+        dopplerShiftHz: Int,
+        azimuthDeg: Double,
+        elevationDeg: Double,
+        altitudeKm: Double
+    ) async throws {
+        try await connection.setSatModeInfo(
+            name: name,
+            rangeKm: rangeKm,
+            dopplerShiftHz: dopplerShiftHz,
+            azimuthDeg: azimuthDeg,
+            elevationDeg: elevationDeg,
+            altitudeKm: altitudeKm
+        )
+    }
     
     /// Send TNC data
     public func sendTncData(_ data: Data) async throws {

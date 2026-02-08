@@ -34,13 +34,13 @@ public struct ProtocolEncoder {
         
         stream.writeInt(channel.channelID, bitCount: 8)
         stream.writeInt(channel.txMod.toProtocolValue(), bitCount: 2)
-        stream.writeInt(Int(channel.txFreq / 1e-6), bitCount: 30)
+        stream.writeInt(clampUInt30(Int((channel.txFreq * 1_000_000.0).rounded())), bitCount: 30)
         stream.writeInt(channel.rxMod.toProtocolValue(), bitCount: 2)
-        stream.writeInt(Int(channel.rxFreq / 1e-6), bitCount: 30)
+        stream.writeInt(clampUInt30(Int((channel.rxFreq * 1_000_000.0).rounded())), bitCount: 30)
         
         // Sub-audio encoding
-        stream.writeInt(encodeSubAudio(channel.txSubAudio), bitCount: 16)
-        stream.writeInt(encodeSubAudio(channel.rxSubAudio), bitCount: 16)
+        stream.writeInt(Int(encodeSubAudioValue(channel.txSubAudio)), bitCount: 16)
+        stream.writeInt(Int(encodeSubAudioValue(channel.rxSubAudio)), bitCount: 16)
         
         stream.writeBool(channel.scan)
         stream.writeBool(channel.txAtMaxPower)
@@ -69,14 +69,27 @@ public struct ProtocolEncoder {
         return stream.toData()
     }
     
-    private static func encodeSubAudio(_ subAudio: SubAudio?) -> Int {
-        guard let subAudio = subAudio else { return 0 }
+    public static func encodeSubAudioValue(_ subAudio: SubAudio?) -> UInt16 {
+        guard let subAudio else { return 0 }
         switch subAudio {
         case .dcs(let dcs):
-            return dcs.n
+            return UInt16(clampUInt16Int(dcs.n))
         case .frequency(let freq):
-            return Int(freq * 100)
+            return UInt16(clampUInt16Int(Int((freq * 100.0).rounded())))
         }
+    }
+
+    private static func clampUInt30(_ value: Int) -> Int {
+        if value <= 0 { return 0 }
+        let max = (1 << 30) - 1
+        if value >= max { return max }
+        return value
+    }
+
+    private static func clampUInt16Int(_ value: Int) -> Int {
+        if value <= 0 { return 0 }
+        if value >= 0xFFFF { return 0xFFFF }
+        return value
     }
     
     // MARK: - Settings Encoding
@@ -152,6 +165,68 @@ public struct ProtocolEncoder {
         var stream = BitStream()
         stream.writeInt(statusType.rawValue, bitCount: 16)
         return stream.toData()
+    }
+
+    // MARK: - Frequency/Satellite Mode (Reverse-engineered)
+
+    /// Encodes `freqModeSetPar` (basic cmd 35) as seen in BLE logs.
+    /// Layout (big-endian):
+    /// - UInt32 rxFreqHz
+    /// - UInt32 txFreqHz
+    /// - UInt32 subAudioWord = (UInt16 rxSubAudio << 16) | UInt16 txSubAudio
+    /// - UInt16 reserved1 (observed 0x0A00)
+    /// - UInt16 reserved2 (observed 0x61A8)
+    public static func encodeFreqModeSetPar(
+        rxFreqHzX: UInt32,
+        txFreqHzX: UInt32,
+        rxSubAudio: SubAudio? = nil,
+        txSubAudio: SubAudio? = nil,
+        reserved1: UInt16 = 0x0A00,
+        reserved2: UInt16 = 0x61A8
+    ) -> Data {
+        var data = Data()
+        data.appendUInt32BE(rxFreqHzX)
+        data.appendUInt32BE(txFreqHzX)
+        let rx = encodeSubAudioValue(rxSubAudio)
+        let tx = encodeSubAudioValue(txSubAudio)
+        let subAudioWord = (UInt32(rx) << 16) | UInt32(tx)
+        data.appendUInt32BE(subAudioWord)
+        data.appendUInt16BE(reserved1)
+        data.appendUInt16BE(reserved2)
+        return data
+    }
+
+    /// Encodes a satellite info payload (basic cmd 77) as seen in BLE logs.
+    /// Layout (big-endian):
+    /// - 20-byte name (UTF-8, null padded)
+    /// - UInt16 rangeKmX10
+    /// - UInt16 azDegX10
+    /// - Int16 dopplerShiftHz
+    /// - UInt16 elDegX10
+    /// - UInt16 altKmX10
+    public static func encodeSatModeSetInfo(
+        name: String,
+        rangeKm: Double,
+        dopplerShiftHz: Int,
+        azimuthDeg: Double,
+        elevationDeg: Double,
+        altitudeKm: Double
+    ) -> Data {
+        var data = Data()
+        data.appendFixedLengthUTF8(name, length: 20)
+
+        let rangeX10 = clampUInt16(Int((rangeKm * 10.0).rounded()))
+        let azX10 = clampUInt16(Int((azimuthDeg * 10.0).rounded()))
+        let doppler = clampInt16(dopplerShiftHz)
+        let elX10 = clampUInt16(Int((elevationDeg * 10.0).rounded()))
+        let altX10 = clampUInt16(Int((altitudeKm * 10.0).rounded()))
+
+        data.appendUInt16BE(rangeX10)
+        data.appendUInt16BE(azX10)
+        data.appendInt16BE(doppler)
+        data.appendUInt16BE(elX10)
+        data.appendUInt16BE(altX10)
+        return data
     }
     
     // MARK: - Channel Read Request Encoding
@@ -322,5 +397,49 @@ public struct ProtocolEncoder {
         }
         
         return stream.toData()
+    }
+
+    // MARK: - Private helpers
+
+    private static func clampUInt16(_ value: Int) -> UInt16 {
+        if value <= 0 { return 0 }
+        if value >= 0xFFFF { return 0xFFFF }
+        return UInt16(value)
+    }
+
+    private static func clampInt16(_ value: Int) -> Int16 {
+        if value <= Int(Int16.min) { return Int16.min }
+        if value >= Int(Int16.max) { return Int16.max }
+        return Int16(value)
+    }
+}
+
+private extension Data {
+    mutating func appendUInt16BE(_ value: UInt16) {
+        append(UInt8((value >> 8) & 0xFF))
+        append(UInt8(value & 0xFF))
+    }
+
+    mutating func appendUInt32BE(_ value: UInt32) {
+        append(UInt8((value >> 24) & 0xFF))
+        append(UInt8((value >> 16) & 0xFF))
+        append(UInt8((value >> 8) & 0xFF))
+        append(UInt8(value & 0xFF))
+    }
+
+    mutating func appendInt16BE(_ value: Int16) {
+        let u = UInt16(bitPattern: value)
+        appendUInt16BE(u)
+    }
+
+    mutating func appendFixedLengthUTF8(_ string: String, length: Int) {
+        var d = string.data(using: .utf8) ?? Data()
+        if d.count > length {
+            d = d.prefix(length)
+        }
+        while d.count < length {
+            d.append(0)
+        }
+        append(d)
     }
 }

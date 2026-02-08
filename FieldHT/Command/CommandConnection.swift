@@ -118,9 +118,18 @@ public class CommandConnection: BLEConnectionDelegate {
                 if message.isReply {
                     if let continuation = self.pendingReplies[message.command] {
                         self.pendingReplies.removeValue(forKey: message.command)
-                        
+
                         let reply = try self.decodeReply(message: message)
                         continuation.resume(returning: .reply(reply))
+                    } else {
+                        let isQuietBasicReply = (message.commandGroup == .basic) && (
+                            message.command == BasicCommand.freqModeSetPar.rawValue ||
+                            message.command == BasicCommand.freqModeGetStatus.rawValue ||
+                            message.command == BasicCommand.satModeSetInfo.rawValue
+                        )
+                        if !isQuietBasicReply {
+                            print("[BLE-RX] Unhandled reply: Grp=\(message.commandGroup) Cmd=\(message.command)")
+                        }
                     }
                 } else {
                     // Handle events
@@ -140,11 +149,80 @@ public class CommandConnection: BLEConnectionDelegate {
             }
         }
     }
+
+    // MARK: - Fire-and-forget commands
+
+    public func setFreqModeParameters(
+        rxFreqHzX: UInt32,
+        txFreqHzX: UInt32,
+        rxSubAudio: SubAudio? = nil,
+        txSubAudio: SubAudio? = nil
+    ) async throws {
+        let body = ProtocolEncoder.encodeFreqModeSetPar(
+            rxFreqHzX: rxFreqHzX,
+            txFreqHzX: txFreqHzX,
+            rxSubAudio: rxSubAudio,
+            txSubAudio: txSubAudio
+        )
+        let data = ProtocolEncoder.encodeMessage(
+            commandGroup: .basic,
+            command: BasicCommand.freqModeSetPar.rawValue,
+            body: body
+        )
+        try await sendBytes(data)
+    }
+
+    public func getFreqModeStatus() async throws {
+        // This command appears to be effectful on some firmware (it influences subsequent sat-mode writes),
+        // so wait for its reply to keep command sequencing stable.
+        _ = try await sendCommandAndWaitForReply(
+            commandGroup: .basic,
+            command: BasicCommand.freqModeGetStatus.rawValue,
+            body: Data()
+        )
+    }
+
+    public func setSatModeInfo(
+        name: String,
+        rangeKm: Double,
+        dopplerShiftHz: Int,
+        azimuthDeg: Double,
+        elevationDeg: Double,
+        altitudeKm: Double
+    ) async throws {
+        let body = ProtocolEncoder.encodeSatModeSetInfo(
+            name: name,
+            rangeKm: rangeKm,
+            dopplerShiftHz: dopplerShiftHz,
+            azimuthDeg: azimuthDeg,
+            elevationDeg: elevationDeg,
+            altitudeKm: altitudeKm
+        )
+        let data = ProtocolEncoder.encodeMessage(
+            commandGroup: .basic,
+            command: BasicCommand.satModeSetInfo.rawValue,
+            body: body
+        )
+        try await sendBytes(data)
+    }
     
     // MARK: - Reply Decoding
     
     private func decodeReply(message: ProtocolMessage) throws -> ReplyMessage {
         switch (message.commandGroup, message.command) {
+        case (.basic, BasicCommand.freqModeGetStatus.rawValue):
+            // Reverse-engineered command 36 (freqModeGetStatus). We don't currently parse it,
+            // but callers may wait for the reply to enforce BLE command sequencing.
+            return .success
+
+        case (.basic, BasicCommand.freqModeSetPar.rawValue):
+            // Reverse-engineered command 35 (freqModeSetPar). Treat reply as ack.
+            return .success
+
+        case (.basic, BasicCommand.satModeSetInfo.rawValue):
+            // Reverse-engineered command 77 (satModeSetInfo). Treat reply as ack.
+            return .success
+
         case (.basic, BasicCommand.getDevInfo.rawValue):
             let replyStatus = try decodeReplyStatus(message.body)
             guard replyStatus == .success else {

@@ -1,9 +1,24 @@
-# Xcode user/workspace state
+# Xcode user state
 *.xcuserstate
 xcuserdata/
 **/xcuserdata/
 
-# Python bytecode
+# Xcode user workspace settings (accidentally committed previously)
+FieldHT.xcodeproj/project.xcworkspace/xcuserdata/
+FieldHT.xcodeproj/xcuserdata/
+
+# Xcode schemes (per-user)
+**/xcuserdata/**/xcschemes/*.xcscheme
+
+# Xcode derived data
+DerivedData/
+
+# macOS
+.DS_Store
+
+# Python
 __pycache__/
-**/__pycache__/
 *.pyc
+
+# Local virtualenvs
+.venv/

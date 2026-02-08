@@ -292,7 +292,7 @@ struct PFSettingsView: View {
         case .disable: return "Disable"
         case .alarm: return "Alarm"
         case .alarmAndMute: return "Alarm and Mute"
-        case .toggleOffline: return "Toggle Offline"
+        case .toggleOffline: return "Toggle Standby"
         case .toggleRadioTx: return "Toggle Radio TX"
         case .toggleTxPower: return "Toggle TX Power"
         case .toggleFM: return "Toggle FM"

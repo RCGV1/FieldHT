@@ -793,7 +793,7 @@ public class SettingsViewModel: ObservableObject {
         case .disable: return "Disable"
         case .alarm: return "Alarm"
         case .alarmAndMute: return "Alarm+Mute"
-        case .toggleOffline: return "Offline"
+        case .toggleOffline: return "Standby"
         case .toggleRadioTx: return "Radio TX"
         case .toggleTxPower: return "TX Power"
         case .toggleFM: return "FM"

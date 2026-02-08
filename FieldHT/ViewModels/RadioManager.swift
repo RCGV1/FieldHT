@@ -549,6 +549,75 @@ public class RadioManager: ObservableObject {
             }
         }
     }
+
+    public func setSplitFrequency(rxMHz: Double, txMHz: Double, for channel: ChannelType) {
+        guard let controller = radioController else { return }
+
+        let vfoID = channel == .a ? 252 : 251
+        isBusy = true
+        Task {
+            do {
+                try await controller.setChannel(vfoID, txFreq: txMHz, rxFreq: rxMHz)
+                isBusy = false
+            } catch {
+                errorMessage = "Failed to set VFO split frequency: \(error.localizedDescription)"
+                isBusy = false
+            }
+        }
+    }
+
+    public func setSplitFrequencyAndCTCSS(
+        rxMHz: Double,
+        txMHz: Double,
+        rxCTCSSHz: Double?,
+        txCTCSSHz: Double?,
+        for channel: ChannelType
+    ) {
+        #if DEBUG
+        // Intentionally quiet: this can be called at high frequency.
+        #endif
+        guard let controller = radioController else { return }
+
+        let vfoID = channel == .a ? 252 : 251
+        isBusy = true
+        Task {
+            do {
+                // Prefer updating the full channel to preserve existing settings.
+                let existing = controller.channelsForCurrentRegion.first(where: { $0.channelID == vfoID })
+                var ch = existing ?? Channel.empty(channelID: vfoID)
+                if existing == nil {
+                    // If we didn't have a hydrated VFO channel, default to HIGH power instead of
+                    // unintentionally forcing LOW by using Channel.empty().
+                    ch.txAtMaxPower = true
+                    ch.txAtMedPower = false
+                    ch.fixedTxPower = false
+                }
+                ch.rxFreq = rxMHz
+                ch.txFreq = txMHz
+                ch.rxSubAudio = rxCTCSSHz.map { .frequency($0) }
+                ch.txSubAudio = txCTCSSHz.map { .frequency($0) }
+                #if DEBUG
+                // Intentionally quiet: avoid noisy debug logs.
+                #endif
+                try await controller.setChannel(ch)
+
+                #if DEBUG
+                // Only verify-readback when we are actually trying to apply a tone.
+                if (rxCTCSSHz ?? -1) > 0 || (txCTCSSHz ?? -1) > 0 {
+                    if let verified = controller.channelsForCurrentRegion.first(where: { $0.channelID == vfoID }) {
+                        // Intentionally quiet: avoid noisy debug logs.
+                    } else {
+                        // Intentionally quiet: avoid noisy debug logs.
+                    }
+                }
+                #endif
+                isBusy = false
+            } catch {
+                errorMessage = "Failed to set VFO tones: \(error.localizedDescription)"
+                isBusy = false
+            }
+        }
+    }
     
     public func switchActiveChannel(to channel: ChannelType) {
         print("RadioManager: switchActiveChannel(\(channel))")
@@ -581,6 +650,56 @@ public class RadioManager: ObservableObject {
             } catch {
                 errorMessage = "Failed to update channel: \(error.localizedDescription)"
                 isBusy = false
+            }
+        }
+    }
+
+    // MARK: - Satellite mode (reverse-engineered)
+
+    public func setFreqModeParameters(
+        rxMHz: Double,
+        txMHz: Double,
+        rxCTCSSHz: Double? = nil,
+        txCTCSSHz: Double? = nil
+    ) {
+        guard let controller = radioController else { return }
+        Task {
+            do {
+                let rxTone = rxCTCSSHz.map { SubAudio.frequency($0) }
+                let txTone = txCTCSSHz.map { SubAudio.frequency($0) }
+                try await controller.setFreqModeParameters(
+                    rxMHz: rxMHz,
+                    txMHz: txMHz,
+                    rxSubAudio: rxTone,
+                    txSubAudio: txTone
+                )
+            } catch {
+                print("Failed to set freq mode parameters: \(error)")
+            }
+        }
+    }
+
+    public func setSatModeInfo(
+        name: String,
+        rangeKm: Double,
+        dopplerShiftHz: Int,
+        azimuthDeg: Double,
+        elevationDeg: Double,
+        altitudeKm: Double
+    ) {
+        guard let controller = radioController else { return }
+        Task {
+            do {
+                try await controller.setSatModeInfo(
+                    name: name,
+                    rangeKm: rangeKm,
+                    dopplerShiftHz: dopplerShiftHz,
+                    azimuthDeg: azimuthDeg,
+                    elevationDeg: elevationDeg,
+                    altitudeKm: altitudeKm
+                )
+            } catch {
+                print("Failed to set satellite mode info: \(error)")
             }
         }
     }

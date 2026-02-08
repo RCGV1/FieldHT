@@ -42,11 +42,14 @@ public enum BLEError: LocalizedError {
 @MainActor
 public class BLEConnection: NSObject {
 
+    private static let bleCaptureDefaultsKey = "com.fieldHT.debug.bleCapture"
+
     private var centralManager: CBCentralManager!
     private var peripheral: CBPeripheral?
 
     private var writeCharacteristic: CBCharacteristic?
     private var indicateCharacteristic: CBCharacteristic?
+    private var auxCharacteristic: CBCharacteristic?
 
     public weak var delegate: BLEConnectionDelegate? {
         didSet {
@@ -161,6 +164,11 @@ public class BLEConnection: NSObject {
         }
         let hex = data.map { String(format: "%02hhx", $0) }.joined()
         print("[BLE-SEND] Writing \(data.count) bytes: \(hex)")
+
+        if UserDefaults.standard.bool(forKey: Self.bleCaptureDefaultsKey) {
+            Task { await BLEPacketCapture.shared.record(direction: .tx, characteristic: writeCharacteristic, data: data) }
+        }
+
         peripheral?.writeValue(data, for: writeCharacteristic, type: .withResponse)
     }
     
@@ -191,6 +199,7 @@ public class BLEConnection: NSObject {
         }
         writeCharacteristic = nil
         indicateCharacteristic = nil
+        auxCharacteristic = nil
         didReachReadyState = false
         didRequestDisconnect = false
 
@@ -471,7 +480,7 @@ extension BLEConnection: CBPeripheralDelegate {
 
         print("BLE: Found radio service UUID: \(radioService.uuid.uuidString), discovering characteristics...")
         peripheral.discoverCharacteristics(
-            [radioWriteUUID, radioIndicateUUID],
+            [radioWriteUUID, radioIndicateUUID, radioAuxUUID],
             for: radioService
         )
     }
@@ -507,6 +516,15 @@ extension BLEConnection: CBPeripheralDelegate {
                 print("BLE: Found Indicate Characteristic")
                 indicateCharacteristic = characteristic
                 peripheral.setNotifyValue(true, for: characteristic)
+            case radioAuxUUID:
+                // The official app appears to know about this characteristic. Subscribe if it supports indications/notifications.
+                auxCharacteristic = characteristic
+                if characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate) {
+                    print("BLE: Found Aux Characteristic (subscribing)")
+                    peripheral.setNotifyValue(true, for: characteristic)
+                } else {
+                    print("BLE: Found Aux Characteristic (no notify/indicate)")
+                }
             default:
                 break
             }
@@ -539,10 +557,14 @@ extension BLEConnection: CBPeripheralDelegate {
              return
         }
         
-        guard
-            characteristic.uuid == radioIndicateUUID,
-            let data = characteristic.value
-        else { return }
+        guard let data = characteristic.value else { return }
+
+        // During OTA we may receive indications on more than one characteristic.
+        guard characteristic.uuid == radioIndicateUUID || characteristic.uuid == radioAuxUUID else { return }
+
+        if UserDefaults.standard.bool(forKey: Self.bleCaptureDefaultsKey) {
+            Task { await BLEPacketCapture.shared.record(direction: .rx, characteristic: characteristic, data: data) }
+        }
         
         // print("BLE: Received data: \(data.count) bytes")
         delegate?.connection(self, didReceiveData: data)
@@ -554,5 +576,74 @@ extension BLEConnection: CBPeripheralDelegate {
         error: Error?
     ) {
         // Optional: handle write confirmation
+    }
+}
+
+// MARK: - Debug Packet Capture (JSONL)
+
+private actor BLEPacketCapture {
+    enum Direction: String {
+        case tx
+        case rx
+    }
+
+    static let shared = BLEPacketCapture()
+
+    private let maxBytes: Int = 5 * 1024 * 1024
+    private let fileName: String = "fieldht_ble_capture.jsonl"
+    private var didLogLocation: Bool = false
+
+    private func logURL() -> URL? {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        return caches.appendingPathComponent(fileName, isDirectory: false)
+    }
+
+    private func rotateIfNeeded(at url: URL) {
+        let fm = FileManager.default
+        guard let attrs = try? fm.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? NSNumber
+        else { return }
+
+        if size.intValue < maxBytes { return }
+
+        let rotated = url.deletingLastPathComponent().appendingPathComponent("\(fileName).1", isDirectory: false)
+        _ = try? fm.removeItem(at: rotated)
+        _ = try? fm.moveItem(at: url, to: rotated)
+    }
+
+    func record(direction: Direction, characteristic: CBCharacteristic?, data: Data) {
+        guard let url = logURL() else { return }
+        let fm = FileManager.default
+
+        if !didLogLocation {
+            didLogLocation = true
+            print("[BLE-CAPTURE] Writing JSONL to: \(url.path)")
+            print("[BLE-CAPTURE] Rotate at ~\(maxBytes) bytes")
+        }
+
+        if !fm.fileExists(atPath: url.path) {
+            _ = fm.createFile(atPath: url.path, contents: nil)
+        } else {
+            rotateIfNeeded(at: url)
+        }
+
+        let uuid = characteristic?.uuid.uuidString.lowercased() ?? ""
+        let ms = Int64((Date().timeIntervalSince1970 * 1000.0).rounded())
+        let hex = data.map { String(format: "%02hhx", $0) }.joined()
+
+        // JSONL for easy grepping/parsing.
+        let line = "{\"unix_ms\":\(ms),\"dir\":\"\(direction.rawValue)\",\"uuid\":\"\(uuid)\",\"len\":\(data.count),\"hex\":\"\(hex)\"}\n"
+        guard let lineData = line.data(using: .utf8) else { return }
+
+        do {
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.seekToEnd()
+            try handle.write(contentsOf: lineData)
+            try handle.close()
+        } catch {
+            // Best-effort only.
+        }
     }
 }

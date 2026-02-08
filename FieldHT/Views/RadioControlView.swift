@@ -253,6 +253,9 @@ struct RadioControlView: View {
             // MARK: - VFO Section
             vfoSection
 
+            // MARK: - Quick Toggles
+            quickTogglesSection
+
             // MARK: - Channel Navigation
             channelNavigationSection
 
@@ -262,9 +265,75 @@ struct RadioControlView: View {
             // MARK: - RSSI Gauge
             rssiGaugeSection
 
+            // MARK: - Amateur Satellite Tracking
+            NavigationLink {
+                SatelliteTrackingView()
+                    .environmentObject(radioManager)
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Amateur Satellite")
+                            .font(.headline)
+                        Text("Map + next pass + Doppler")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(.secondary)
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.secondarySystemBackground))
+                .cornerRadius(12)
+            }
+
             Spacer()
         }
         .padding()
+    }
+
+    private func currentActiveChannelForTalkAround() -> Channel? {
+        guard let controller = radioManager.radioController else { return nil }
+
+        let active = radioManager.activeChannel
+        let channelID: Int
+
+        switch active {
+        case .a:
+            channelID = radioManager.isVFOA ? 252 : radioManager.vfoAIndex
+        case .b:
+            channelID = radioManager.isVFOB ? 251 : radioManager.vfoBIndex
+        case .off:
+            // If dual watch is off we treat A as active.
+            channelID = radioManager.isVFOA ? 252 : radioManager.vfoAIndex
+        }
+
+        return controller.channelsForCurrentRegion.first(where: { $0.channelID == channelID })
+    }
+
+    private var quickTogglesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Quick Toggles")
+                .font(.headline)
+
+            Toggle(
+                isOn: Binding(
+                    get: { currentActiveChannelForTalkAround()?.talkAround ?? false },
+                    set: { newValue in
+                        guard var channel = currentActiveChannelForTalkAround() else { return }
+                        channel.talkAround = newValue
+                        radioManager.updateChannel(channel)
+                    }
+                )
+            ) {
+                Label("Talk Around", systemImage: "arrow.triangle.2.circlepath")
+            }
+            .disabled(!radioManager.isConnected || radioManager.isBusy || currentActiveChannelForTalkAround() == nil)
+            .padding()
+            .background(Color(.secondarySystemBackground))
+            .cornerRadius(12)
+        }
     }
 
     private var dualMonitorToggle: some View {
