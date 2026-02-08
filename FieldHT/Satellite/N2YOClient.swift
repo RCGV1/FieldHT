@@ -10,7 +10,7 @@ enum N2YOClientError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingAPIKey:
-            return "Missing N2YO API key (set N2YO_API_KEY via env var, UserDefaults, or Info.plist)"
+            return "Missing N2YO API key. Add it in-app (Satellite view) or via Xcode scheme env var for debug."
         case .invalidURL:
             return "Invalid N2YO URL"
         case .httpStatus(let code):
@@ -97,9 +97,9 @@ final class N2YOClient {
             return env
         }
 
-        // 2) UserDefaults (allows setting from an in-app UI later)
-        if let ud = UserDefaults.standard.string(forKey: "N2YO_API_KEY")?.trimmingCharacters(in: .whitespacesAndNewlines), !ud.isEmpty {
-            return ud
+        // 2) Keychain/UserDefaults (in-app entry). UserDefaults value is migrated to Keychain.
+        if let stored = N2YOAPIKeyStore.get() {
+            return stored
         }
 
         // 3) Info.plist (avoid committing real keys)

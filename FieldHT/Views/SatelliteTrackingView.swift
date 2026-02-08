@@ -147,7 +147,7 @@ struct SatelliteTrackingView: View {
                             .foregroundColor(.secondary)
 
                         HStack {
-                            TextField("N2YO API key", text: $vm.n2yoAPIKeyDraft)
+                            SecureField("N2YO API key", text: $vm.n2yoAPIKeyDraft)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled(true)
                                 .privacySensitive()
@@ -155,6 +155,12 @@ struct SatelliteTrackingView: View {
                             Button("Save") {
                                 vm.setN2YOAPIKey(vm.n2yoAPIKeyDraft)
                                 Task { await vm.refreshFavorites() }
+                            }
+
+                            Button(role: .destructive) {
+                                vm.setN2YOAPIKey("")
+                            } label: {
+                                Text("Clear")
                             }
                         }
                     }

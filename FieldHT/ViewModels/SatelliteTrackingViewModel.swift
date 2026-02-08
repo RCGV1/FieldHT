@@ -146,7 +146,6 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
 
     private static let pinnedKey = "com.fieldHT.sat.pinnedNoradIds"
     private static let favoritesKey = "com.fieldHT.sat.favoriteNoradIds"
-    private static let n2yoAPIKeyDefaultsKey = "N2YO_API_KEY"
     private var passCache: [Int: [Pass]] = [:]
     private var passCacheLocation: CLLocation?
 
@@ -257,19 +256,16 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
             defaults.set(arr, forKey: Self.favoritesKey)
         }
 
-        n2yoAPIKeyDraft = (defaults.string(forKey: Self.n2yoAPIKeyDefaultsKey) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Prefer Keychain-backed storage (migrates any legacy UserDefaults value automatically).
+        n2yoAPIKeyDraft = N2YOAPIKeyStore.get() ?? ""
 
         loadSupportCache()
     }
 
     func setN2YOAPIKey(_ key: String) {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            UserDefaults.standard.removeObject(forKey: Self.n2yoAPIKeyDefaultsKey)
-        } else {
-            UserDefaults.standard.set(trimmed, forKey: Self.n2yoAPIKeyDefaultsKey)
-        }
+        if trimmed.isEmpty { N2YOAPIKeyStore.clear() }
+        else { N2YOAPIKeyStore.set(trimmed) }
         n2yoAPIKeyDraft = trimmed
 
         // Force a re-fetch on next request.
