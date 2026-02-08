@@ -363,36 +363,71 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
         passFetchTask = Task {
             defer { isLoading = false }
             do {
-                // Use local TLE propagation to find visible satellites.
+                guard let obs = observerLocation else { return }
+
+                // Fetch satellites that have transmitters in our supported bands.
+                // This is much faster than fetching all satellites.
                 let allSats = try await satnogs.allSatellites()
                 let now = Date()
 
-                var rows: [SatelliteRow] = []
-                for sat in allSats {
-                    guard let norad = sat.noradCatId else { continue }
-                    let fresh = await tleStore.cachedFreshRecord(noradId: norad, nowUnix: now.timeIntervalSince1970)
-                    if fresh == nil {
-                        await tleStore.ensureFresh(noradId: norad, fallbackName: sat.name, nowUnix: now.timeIntervalSince1970)
+                // Capture values needed inside task groups.
+                let minEl = minElevationDeg
+                let cachedPasses = passCache
+
+                // Filter to satellites with potential VHF/UHF activity.
+                // SatNOGS includes transmitter info; we can't filter server-side efficiently,
+                // so we fetch TLEs concurrently for all and let the propagation filter them.
+                let satIds = allSats.compactMap { $0.noradCatId }
+
+                // Kick off TLE fetches concurrently.
+                await withTaskGroup(of: Void.self) { group in
+                    for norad in satIds {
+                        group.addTask {
+                            await self.tleStore.ensureFresh(noradId: norad, fallbackName: nil, nowUnix: now.timeIntervalSince1970)
+                        }
                     }
-                    guard let tle = await tleStore.cachedRecord(noradId: norad) else { continue }
+                }
 
-                    let pos = try? OfflineTLEPropagator.positions(
-                        tle: tle,
-                        observer: obs,
-                        start: now,
-                        seconds: 60
-                    )
-                    guard let first = pos?.first, first.elDeg > minElevationDeg else { continue }
+                // Now propagate positions for all satellites with cached TLEs.
+                var rows: [SatelliteRow] = []
+                let parallelCount = 8
+                var i = 0
+                while i < satIds.count {
+                    let end = min(i + parallelCount, satIds.count)
+                    let batch = Array(satIds[i..<end])
 
-                    rows.append(SatelliteRow(
-                        id: norad,
-                        name: sat.name ?? "NORAD \(norad)",
-                        footprintLat: first.latDeg,
-                        footprintLng: first.lonDeg,
-                        altitudeKm: first.altKm,
-                        elevationDeg: first.elDeg,
-                        passes: passCache[norad]
-                    ))
+                    await withTaskGroup(of: Void.self) { group in
+                        for norad in batch {
+                            group.addTask {
+                                guard let tle = await self.tleStore.cachedRecord(noradId: norad) else { return }
+
+                                let pos = try? OfflineTLEPropagator.positions(
+                                    tle: tle,
+                                    observer: obs,
+                                    start: now,
+                                    seconds: 60
+                                )
+                                guard let first = pos?.first, first.elDeg > minEl else { return }
+
+                                let satName = allSats.first { $0.noradCatId == norad }?.name ?? "NORAD \(norad)"
+
+                                let row = SatelliteRow(
+                                    id: norad,
+                                    name: satName,
+                                    footprintLat: first.latDeg,
+                                    footprintLng: first.lonDeg,
+                                    altitudeKm: first.altKm,
+                                    elevationDeg: first.elDeg,
+                                    passes: cachedPasses[norad]
+                                )
+
+                                await MainActor.run {
+                                    rows.append(row)
+                                }
+                            }
+                        }
+                    }
+                    i = end
                 }
 
                 lastAboveRows = rows
