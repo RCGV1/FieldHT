@@ -23,11 +23,11 @@ enum Doppler {
 
     static func estimateRangeRateMetersPerSecond(
         observer: CLLocation,
-        positions: [N2YOSatPosition]
+        positions: [OfflineSatPosition]
     ) -> Double? {
         guard positions.count >= 2 else { return nil }
 
-        // Use the first two samples (1 second apart in N2YO output).
+        // Use the first two samples (1 second apart in output).
         let a = positions[0]
         let b = positions[1]
 
@@ -41,9 +41,9 @@ enum Doppler {
         return (r1 - r0) / dt
     }
 
-    static func slantRangeMeters(observer: CLLocation, sat: N2YOSatPosition) -> Double {
+    static func slantRangeMeters(observer: CLLocation, sat: OfflineSatPosition) -> Double {
         let obs = ecefMeters(latDeg: observer.coordinate.latitude, lonDeg: observer.coordinate.longitude, altMeters: observer.altitude)
-        let satEcef = ecefMeters(latDeg: sat.satlatitude, lonDeg: sat.satlongitude, altMeters: sat.sataltitude * 1000.0)
+        let satEcef = ecefMeters(latDeg: sat.latDeg, lonDeg: sat.lonDeg, altMeters: sat.altKm * 1000.0)
         let dx = satEcef.x - obs.x
         let dy = satEcef.y - obs.y
         let dz = satEcef.z - obs.z

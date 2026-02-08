@@ -14,7 +14,6 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
         case unknown
         case offlineFreshTLE
         case offlineStaleTLE
-        case onlineN2YO
     }
     enum SortMode: String, CaseIterable, Identifiable {
         case nextPass
@@ -56,8 +55,6 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
 
     @Published var isLoadingPasses: Bool = false
     @Published var passStatusMessage: String?
-    @Published var isMissingN2YOAPIKey: Bool = false
-    @Published var n2yoAPIKeyDraft: String = ""
 
     @Published var isFilteringSupportedSatellites: Bool = false
 
@@ -85,8 +82,8 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
 
     @Published private(set) var trackingSource: TrackingSource = .unknown
 
-    @Published var selectedPositions: [N2YOSatPosition] = []
-    @Published var selectedPathPositions: [N2YOSatPosition] = []
+    @Published var selectedPositions: [OfflineSatPosition] = []
+    @Published var selectedPathPositions: [OfflineSatPosition] = []
     @Published var selectedAzimuth: Double?
     @Published var selectedElevation: Double?
     @Published var selectedRangeKm: Double?
@@ -103,8 +100,6 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
             return "Tracking: Cached"
         case .offlineStaleTLE:
             return "Tracking: Cached (stale)"
-        case .onlineN2YO:
-            return "Tracking: Network"
         }
     }
 
@@ -138,7 +133,6 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
     @Published private(set) var syncRadioSatModeEnabled: Bool = true
 
     private let locationManager = CLLocationManager()
-    private let n2yo = N2YOClient()
     private let satnogs = SatNogDBClient()
     private let tleStore = TLEStore()
 
@@ -174,7 +168,7 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
 
     private var lastPositionsFetchAt: Date?
     private var lastPositionsSatId: Int?
-    private var lastPositions: [N2YOSatPosition] = []
+    private var lastPositions: [OfflineSatPosition] = []
     private static let positionsFetchIntervalSeconds: Double = 30
     private static let positionsWindowSeconds: Int = 60
 
@@ -256,22 +250,8 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
             defaults.set(arr, forKey: Self.favoritesKey)
         }
 
-        // Prefer Keychain-backed storage (migrates any legacy UserDefaults value automatically).
-        n2yoAPIKeyDraft = N2YOAPIKeyStore.get() ?? ""
-
+        // Load TLE cache and initialize.
         loadSupportCache()
-    }
-
-    func setN2YOAPIKey(_ key: String) {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { N2YOAPIKeyStore.clear() }
-        else { N2YOAPIKeyStore.set(trimmed) }
-        n2yoAPIKeyDraft = trimmed
-
-        // Force a re-fetch on next request.
-        passCache.removeAll(keepingCapacity: true)
-        passStatusMessage = nil
-        isMissingN2YOAPIKey = false
     }
 
     private func beginPassFetch(clearStatus: Bool) {
@@ -279,7 +259,6 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
         isLoadingPasses = true
         if clearStatus {
             passStatusMessage = nil
-            isMissingN2YOAPIKey = false
         }
     }
 
@@ -384,30 +363,36 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
         passFetchTask = Task {
             defer { isLoading = false }
             do {
-                let above = try await n2yo.above(
-                    observerLat: obs.coordinate.latitude,
-                    observerLng: obs.coordinate.longitude,
-                    observerAltMeters: obs.altitude,
-                    searchRadiusDeg: 90,
-                    categoryId: 18
-                )
+                // Use local TLE propagation to find visible satellites.
+                let allSats = try await satnogs.allSatellites()
+                let now = Date()
 
-                let rows: [SatelliteRow] = above.above.map { sat in
-                    let el = Self.estimateElevationDeg(
+                var rows: [SatelliteRow] = []
+                for sat in allSats {
+                    guard let norad = sat.noradCatId else { continue }
+                    let fresh = await tleStore.cachedFreshRecord(noradId: norad, nowUnix: now.timeIntervalSince1970)
+                    if fresh == nil {
+                        await tleStore.ensureFresh(noradId: norad, fallbackName: sat.name, nowUnix: now.timeIntervalSince1970)
+                    }
+                    guard let tle = await tleStore.cachedRecord(noradId: norad) else { continue }
+
+                    let pos = try? OfflineTLEPropagator.positions(
+                        tle: tle,
                         observer: obs,
-                        satLat: sat.satlat,
-                        satLng: sat.satlng,
-                        satAltitudeKm: sat.satalt
+                        start: now,
+                        seconds: 60
                     )
-                    return SatelliteRow(
-                        id: sat.satid,
-                        name: sat.satname,
-                        footprintLat: sat.satlat,
-                        footprintLng: sat.satlng,
-                        altitudeKm: sat.satalt,
-                        elevationDeg: el,
-                        passes: passCache[sat.satid]
-                    )
+                    guard let first = pos?.first, first.elDeg > minElevationDeg else { continue }
+
+                    rows.append(SatelliteRow(
+                        id: norad,
+                        name: sat.name ?? "NORAD \(norad)",
+                        footprintLat: first.latDeg,
+                        footprintLng: first.lonDeg,
+                        altitudeKm: first.altKm,
+                        elevationDeg: first.elDeg,
+                        passes: passCache[norad]
+                    ))
                 }
 
                 lastAboveRows = rows
@@ -458,19 +443,20 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
             for sat in rows {
                 if Task.isCancelled { return }
                 if passCache[sat.id] != nil { continue }
-                let passes = try await n2yo.radioPasses(
-                    satId: sat.id,
-                    observerLat: obs.coordinate.latitude,
-                    observerLng: obs.coordinate.longitude,
-                    observerAltMeters: obs.altitude,
-                    days: 1,
-                    minElevationDeg: Int(minElevationDeg.rounded())
-                )
+                guard let tle = await tleStore.cachedRecord(noradId: sat.id) else { continue }
 
-                let mapped = Array(passes.passes.prefix(3)).map {
-                    Pass(startUTC: $0.startUTC, maxEl: $0.maxEl, maxUTC: $0.maxUTC, endUTC: $0.endUTC)
-                }
-                if !mapped.isEmpty {
+                if let pass = try await SatPassPredictor.nextPass(
+                    tle: tle,
+                    observer: obs,
+                    days: 1,
+                    minElevation: minElevationDeg
+                ) {
+                    let mapped: [Pass] = [Pass(
+                        startUTC: pass.startUTC,
+                        maxEl: pass.maxEl,
+                        maxUTC: pass.maxUTC,
+                        endUTC: pass.endUTC
+                    )]
                     passCache[sat.id] = mapped
                     updatePassesInLists(satId: sat.id, passes: mapped)
                 }
@@ -478,9 +464,6 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
             }
         } catch {
             if Self.isCancellationLike(error) { return }
-            if let e = error as? N2YOClientError, case .missingAPIKey = e {
-                isMissingN2YOAPIKey = true
-            }
             passStatusMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
 
@@ -780,30 +763,12 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
                     seconds: Self.pathWindowSeconds,
                     stepSeconds: Self.pathStepSeconds
                 )
-                let mapped: [N2YOSatPosition] = offline.map {
-                    N2YOSatPosition(
-                        satlatitude: $0.latDeg,
-                        satlongitude: $0.lonDeg,
-                        sataltitude: $0.altKm,
-                        azimuth: $0.azDeg,
-                        elevation: $0.elDeg,
-                        ra: nil,
-                        dec: nil,
-                        timestamp: $0.timestamp
-                    )
+                let mapped: [OfflineSatPosition] = offline.map {
+                    $0
                 }
 
-                let mappedPath: [N2YOSatPosition] = offlinePath.map {
-                    N2YOSatPosition(
-                        satlatitude: $0.latDeg,
-                        satlongitude: $0.lonDeg,
-                        sataltitude: $0.altKm,
-                        azimuth: $0.azDeg,
-                        elevation: $0.elDeg,
-                        ra: nil,
-                        dec: nil,
-                        timestamp: $0.timestamp
-                    )
+                let mappedPath: [OfflineSatPosition] = offlinePath.map {
+                    $0
                 }
 
                 selectedPositions = mapped
@@ -814,9 +779,9 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
                 lastPositions = mapped
 
                 if let first = mapped.first {
-                    selectedAzimuth = first.azimuth
-                    selectedElevation = first.elevation
-                    selectedAltitudeKm = first.sataltitude
+                    selectedAzimuth = first.azDeg
+                    selectedElevation = first.elDeg
+                    selectedAltitudeKm = first.altKm
                     selectedRangeKm = Doppler.slantRangeMeters(observer: obs, sat: first) / 1000.0
                 }
 
@@ -855,11 +820,11 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
            now.timeIntervalSince(lastAt) < Self.positionsFetchIntervalSeconds,
            !lastPositions.isEmpty {
             selectedPositions = lastPositions
-            trackingSource = .onlineN2YO
+            trackingSource = .offlineStaleTLE
             if let first = lastPositions.first {
-                selectedAzimuth = first.azimuth
-                selectedElevation = first.elevation
-                selectedAltitudeKm = first.sataltitude
+                selectedAzimuth = first.azDeg
+                selectedElevation = first.elDeg
+                selectedAltitudeKm = first.altKm
                 selectedRangeKm = Doppler.slantRangeMeters(observer: obs, sat: first) / 1000.0
             }
             if let rr = Doppler.estimateRangeRateMetersPerSecond(observer: obs, positions: lastPositions) {
@@ -881,28 +846,32 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
         }
 
         do {
-            let resp = try await n2yo.positions(
-                satId: satId,
-                observerLat: obs.coordinate.latitude,
-                observerLng: obs.coordinate.longitude,
-                observerAltMeters: obs.altitude,
-                seconds: Self.positionsWindowSeconds
+            guard let tle = await tleStore.cachedRecord(noradId: satId) else {
+                throw TLEClientError.sgp4Unavailable
+            }
+
+            let positions = try OfflineTLEPropagator.positionsSampled(
+                tle: tle,
+                observer: obs,
+                start: now,
+                seconds: Self.positionsWindowSeconds,
+                stepSeconds: Self.pathStepSeconds
             )
-            selectedPositions = resp.positions
-            trackingSource = .onlineN2YO
+            selectedPositions = positions
+            trackingSource = .offlineStaleTLE
 
             lastPositionsFetchAt = now
             lastPositionsSatId = satId
-            lastPositions = resp.positions
+            lastPositions = positions
 
-            if let first = resp.positions.first {
-                selectedAzimuth = first.azimuth
-                selectedElevation = first.elevation
-                selectedAltitudeKm = first.sataltitude
+            if let first = positions.first {
+                selectedAzimuth = first.azDeg
+                selectedElevation = first.elDeg
+                selectedAltitudeKm = first.altKm
                 selectedRangeKm = Doppler.slantRangeMeters(observer: obs, sat: first) / 1000.0
             }
 
-            if let rr = Doppler.estimateRangeRateMetersPerSecond(observer: obs, positions: resp.positions) {
+            if let rr = Doppler.estimateRangeRateMetersPerSecond(observer: obs, positions: positions) {
                 rangeRateMetersPerSecond = rr
                 let corr = Doppler.correction(
                     nominalRxHz: nominalRxMHz * 1_000_000.0,
@@ -994,7 +963,7 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
             return "Cache"
         case .offlineStaleTLE:
             return "Cache"
-        case .onlineN2YO:
+        case .offlineStaleTLE:
             return "Net"
         case .unknown:
             return ""
@@ -1633,32 +1602,26 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
         let subset = Array(favoriteSatellites.prefix(limit))
         guard !subset.isEmpty else { return }
 
-        // N2YO /radiopasses is 100/hr. Keep it bounded.
         do {
             for sat in subset {
                 if Task.isCancelled { return }
                 if passCache[sat.id] != nil { continue }
-                let passes = try await n2yo.radioPasses(
-                    satId: sat.id,
-                    observerLat: obs.coordinate.latitude,
-                    observerLng: obs.coordinate.longitude,
-                    observerAltMeters: obs.altitude,
+                guard let tle = await tleStore.cachedRecord(noradId: sat.id) else { continue }
+
+                if let pass = try await SatPassPredictor.nextPass(
+                    tle: tle,
+                    observer: obs,
                     days: 1,
-                    minElevationDeg: Int(minElevationDeg.rounded())
-                )
-                let mapped = Array(passes.passes.prefix(3)).map {
-                    Pass(startUTC: $0.startUTC, maxEl: $0.maxEl, maxUTC: $0.maxUTC, endUTC: $0.endUTC)
-                }
-                if !mapped.isEmpty {
+                    minElevation: minElevationDeg
+                ) {
+                    let mapped: [Pass] = [Pass(startUTC: pass.startUTC, maxEl: pass.maxEl, maxUTC: pass.maxUTC, endUTC: pass.endUTC)]
                     passCache[sat.id] = mapped
                     updatePassesInLists(satId: sat.id, passes: mapped)
                     rebuildNowSoonList()
                 }
-                // Space out requests a bit.
                 try? await Task.sleep(nanoseconds: 200_000_000)
             }
         } catch {
-            // Ignore; pass data is best-effort.
         }
     }
 
@@ -1669,27 +1632,21 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
         beginPassFetch(clearStatus: true)
         defer { endPassFetch() }
         do {
-            let passes = try await n2yo.radioPasses(
-                satId: satId,
-                observerLat: obs.coordinate.latitude,
-                observerLng: obs.coordinate.longitude,
-                observerAltMeters: obs.altitude,
+            guard let tle = await tleStore.cachedRecord(noradId: satId) else { return }
+
+            if let pass = try await SatPassPredictor.nextPass(
+                tle: tle,
+                observer: obs,
                 days: 1,
-                minElevationDeg: Int(minElevationDeg.rounded())
-            )
-            let mapped = Array(passes.passes.prefix(3)).map {
-                Pass(startUTC: $0.startUTC, maxEl: $0.maxEl, maxUTC: $0.maxUTC, endUTC: $0.endUTC)
-            }
-            if !mapped.isEmpty {
+                minElevation: minElevationDeg
+            ) {
+                let mapped: [Pass] = [Pass(startUTC: pass.startUTC, maxEl: pass.maxEl, maxUTC: pass.maxUTC, endUTC: pass.endUTC)]
                 passCache[satId] = mapped
                 updatePassesInLists(satId: satId, passes: mapped)
                 rebuildNowSoonList()
             }
         } catch {
             if Self.isCancellationLike(error) { return }
-            if let e = error as? N2YOClientError, case .missingAPIKey = e {
-                isMissingN2YOAPIKey = true
-            }
             passStatusMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }

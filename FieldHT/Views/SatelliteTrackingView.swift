@@ -11,10 +11,10 @@ struct SatelliteTrackingView: View {
 
     private var selectedCoordinate: CLLocationCoordinate2D? {
         guard let first = vm.selectedPositions.first else { return nil }
-        return CLLocationCoordinate2D(latitude: first.satlatitude, longitude: first.satlongitude)
+        return CLLocationCoordinate2D(latitude: first.latDeg, longitude: first.lonDeg)
     }
 
-    private var pathPositions: [N2YOSatPosition] {
+    private var pathPositions: [OfflineSatPosition] {
         if vm.selectedPathPositions.count >= 2 {
             return vm.selectedPathPositions
         }
@@ -25,7 +25,7 @@ struct SatelliteTrackingView: View {
         var coords: [CLLocationCoordinate2D] = []
         coords.reserveCapacity(pathPositions.count)
         for p in pathPositions {
-            coords.append(CLLocationCoordinate2D(latitude: p.satlatitude, longitude: p.satlongitude))
+            coords.append(CLLocationCoordinate2D(latitude: p.latDeg, longitude: p.lonDeg))
         }
         return coords
     }
@@ -119,8 +119,6 @@ struct SatelliteTrackingView: View {
         return nil
     }
 
-    private var isMissingN2YOKey: Bool { vm.isMissingN2YOAPIKey }
-
     var body: some View {
         List {
             Section {
@@ -138,32 +136,6 @@ struct SatelliteTrackingView: View {
                 } else if vm.isLoadingPasses {
                     ProgressView("Loading passes...")
                         .font(.caption)
-                }
-
-                if isMissingN2YOKey {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Pass times need an N2YO API key.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-
-                        HStack {
-                            SecureField("N2YO API key", text: $vm.n2yoAPIKeyDraft)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled(true)
-                                .privacySensitive()
-
-                            Button("Save") {
-                                vm.setN2YOAPIKey(vm.n2yoAPIKeyDraft)
-                                Task { await vm.refreshFavorites() }
-                            }
-
-                            Button(role: .destructive) {
-                                vm.setN2YOAPIKey("")
-                            } label: {
-                                Text("Clear")
-                            }
-                        }
-                    }
                 }
 
                 mapCard

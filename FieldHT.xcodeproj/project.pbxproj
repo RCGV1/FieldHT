@@ -38,10 +38,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		BC9B55C22F0B036400429275 /* FieldHT.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FieldHT.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		BCB2C42C2F4A1A8100D8A0A1 /* FieldHT-Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = FieldHT-Debug.xcconfig; path = Configs/FieldHT-Debug.xcconfig; sourceTree = "<group>"; };
-		BCB2C42D2F4A1A8100D8A0A1 /* FieldHT-Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = FieldHT-Release.xcconfig; path = Configs/FieldHT-Release.xcconfig; sourceTree = "<group>"; };
-		BCB9D57C2F36C85D005B0F8E /* WidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = WidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+ 		BC9B55C22F0B036400429275 /* FieldHT.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FieldHT.app; sourceTree = BUILT_PRODUCTS_DIR; };
+ 		BCB9D57C2F36C85D005B0F8E /* WidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = WidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		BCB9D57E2F36C85D005B0F8E /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		BCB9D5802F36C85D005B0F8E /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
@@ -124,15 +122,6 @@
 			);
 			sourceTree = "<group>";
 		};
-		BCB2C42E2F4A1A8100D8A0A1 /* Configs */ = {
-			isa = PBXGroup;
-			children = (
-				BCB2C42C2F4A1A8100D8A0A1 /* FieldHT-Debug.xcconfig */,
-				BCB2C42D2F4A1A8100D8A0A1 /* FieldHT-Release.xcconfig */,
-			);
-			name = Configs;
-			sourceTree = "<group>";
-		};
 		BC9B55C32F0B036400429275 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -140,6 +129,15 @@
 				BCB9D57C2F36C85D005B0F8E /* WidgetExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		BCB2C42E2F4A1A8100D8A0A1 /* Configs */ = {
+			isa = PBXGroup;
+			children = (
+				BCB2C42C2F4A1A8100D8A0A1 /* FieldHT-Debug.xcconfig */,
+				BCB2C42D2F4A1A8100D8A0A1 /* FieldHT-Release.xcconfig */,
+			);
+			name = Configs;
 			sourceTree = "<group>";
 		};
 		BCB9D57D2F36C85D005B0F8E /* Frameworks */ = {
@@ -406,13 +404,12 @@
 			};
 			name = Release;
 		};
-		BC9B55CE2F0B036500429275 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BASE_CONFIGURATION_REFERENCE = BCB2C42C2F4A1A8100D8A0A1 /* FieldHT-Debug.xcconfig */;
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_STYLE = Automatic;
+ 		BC9B55CE2F0B036500429275 /* Debug */ = {
+ 			isa = XCBuildConfiguration;
+ 			buildSettings = {
+ 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+ 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+ 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = FRFXFRT624;
 				ENABLE_PREVIEWS = YES;
@@ -442,13 +439,12 @@
 			};
 			name = Debug;
 		};
-		BC9B55CF2F0B036500429275 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BASE_CONFIGURATION_REFERENCE = BCB2C42D2F4A1A8100D8A0A1 /* FieldHT-Release.xcconfig */;
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_STYLE = Automatic;
+ 		BC9B55CF2F0B036500429275 /* Release */ = {
+ 			isa = XCBuildConfiguration;
+ 			buildSettings = {
+ 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+ 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+ 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = FRFXFRT624;
 				ENABLE_PREVIEWS = YES;
