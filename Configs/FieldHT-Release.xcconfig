@@ -1,0 +1,4 @@
+// Release/App Store configuration.
+// Secrets are provided via an untracked xcconfig file so they are not committed.
+
+#include? "FieldHT-Secrets.xcconfig"
