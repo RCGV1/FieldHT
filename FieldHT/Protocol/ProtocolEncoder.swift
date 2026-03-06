@@ -27,6 +27,14 @@ public struct ProtocolEncoder {
         return stream.toData()
     }
     
+    // MARK: - Programmable Function Encoding
+    
+    public static func encodeDoProgFunc(_ effect: Int) -> Data {
+        var stream = BitStream()
+        stream.writeInt(effect, bitCount: 8)
+        return stream.toData()
+    }
+    
     // MARK: - Channel Encoding
     
     public static func encodeChannel(_ channel: Channel) -> Data {
@@ -167,6 +175,20 @@ public struct ProtocolEncoder {
         return stream.toData()
     }
 
+    // MARK: - Radio Control Encoding
+
+    public static func encodeSetHTOnOff(_ isOn: Bool) -> Data {
+        var stream = BitStream()
+        stream.writeBool(isOn)
+        return stream.toData()
+    }
+
+    public static func encodeRadioSetMode(_ mode: Int) -> Data {
+        var stream = BitStream()
+        stream.writeInt(mode, bitCount: 8)
+        return stream.toData()
+    }
+
     // MARK: - Frequency/Satellite Mode (Reverse-engineered)
 
     /// Encodes `freqModeSetPar` (basic cmd 35) as seen in BLE logs.
@@ -253,7 +275,18 @@ public struct ProtocolEncoder {
         
         return stream.toData()
     }
-    
+
+    // MARK: - Volume Encoding
+
+    /// Encode volume level (radio expects 0-255, iOS uses 0-100)
+    public static func encodeSetVolume(_ level: Int) -> Data {
+        var stream = BitStream()
+        // Convert 0-100 iOS volume to 0-255 radio volume
+        let radioLevel = (max(0, min(100, level)) * 255) / 100
+        stream.writeInt(radioLevel, bitCount: 8)
+        return stream.toData()
+    }
+
     // MARK: - Beacon Settings Encoding
     
     public static func encodeBeaconSettings(_ settings: BeaconSettings) -> Data {
@@ -266,7 +299,7 @@ public struct ProtocolEncoder {
         stream.writeBool(settings.pttReleaseSendBSSUserID)
         stream.writeBool(settings.shouldShareLocation)
         stream.writeBool(settings.sendPwrVoltage)
-        //stream.writeInt(settings.packetFormat.rawValue, bitCount: 1)
+        stream.writeInt(settings.packetFormat.toProtocolValue(), bitCount: 1)
         stream.writeBool(settings.allowPositionCheck)
         stream.writeInt(0, bitCount: 1) // pad
         stream.writeInt(settings.aprsSSID, bitCount: 4)

@@ -62,6 +62,8 @@ public class RadioManager: ObservableObject {
         return .off
     }
     var currChIDUpper: Int { radioController?.state?.status.currChIDUpper ?? 0 }
+    var isScanning: Bool { radioController?.state?.settings.scan ?? false }
+
     
     @Published public var batteryVoltage: Double = 0.0
     @Published public var batteryLevel: Int = 0
@@ -406,6 +408,28 @@ public class RadioManager: ObservableObject {
         }
     }
     
+    // MARK: - Scanning Control
+    
+    public func toggleScan() {
+        print("RadioManager: toggleScan()")
+        guard let controller = radioController else {
+            print("RadioManager: No controller!")
+            return
+        }
+        isBusy = true
+        Task {
+            do {
+                try await controller.toggleScan()
+                print("RadioManager: Scan toggled successfully")
+                isBusy = false
+            } catch {
+                print("RadioManager: Failed to toggle scan: \(error)")
+                errorMessage = "Failed to toggle scan: \(error.localizedDescription)"
+                isBusy = false
+            }
+        }
+    }
+    
     // MARK: - Radio Control Actions
     
     public func setChannelA(_ index: Int) {
@@ -478,7 +502,34 @@ public class RadioManager: ObservableObject {
             }
         }
     }
-    
+
+    // MARK: - Volume Control
+
+    /// Get current volume level
+    public func getVolume() async -> Int {
+        guard let controller = radioController else { return 0 }
+        do {
+            return try await controller.volume()
+        } catch {
+            print("RadioManager: Failed to get volume: \(error)")
+            return 0
+        }
+    }
+
+    /// Set volume level (0-100)
+    public func setVolume(_ level: Int) {
+        guard let controller = radioController else { return }
+        Task {
+            do {
+                try await controller.setVolume(level)
+                print("RadioManager: Volume set to \(level)")
+            } catch {
+                print("RadioManager: Failed to set volume: \(error)")
+                errorMessage = "Failed to set volume: \(error.localizedDescription)"
+            }
+        }
+    }
+
     // MARK: - VFO Control
     
     /// Check if VFO mode is active for channel A
@@ -702,5 +753,23 @@ public class RadioManager: ObservableObject {
                 print("Failed to set satellite mode info: \(error)")
             }
         }
+    }
+
+    // MARK: - Beacon Settings
+
+    /// Get beacon settings from radio
+    public func getBeaconSettings() async throws -> BeaconSettings {
+        guard let controller = radioController else {
+            throw RadioError.stateNotInitialized
+        }
+        return try await controller.getBeaconSettings()
+    }
+
+    /// Set beacon settings on radio
+    public func setBeaconSettings(_ settings: BeaconSettings) async throws {
+        guard let controller = radioController else {
+            throw RadioError.stateNotInitialized
+        }
+        try await controller.setBeaconSettings(settings)
     }
 }

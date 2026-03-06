@@ -50,7 +50,6 @@
             ReferencedContainer = "container:FieldHT.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
-      <EnvironmentVariables/>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"
@@ -68,7 +67,6 @@
             ReferencedContainer = "container:FieldHT.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
-      <EnvironmentVariables/>
    </ProfileAction>
    <AnalyzeAction
       buildConfiguration = "Debug">

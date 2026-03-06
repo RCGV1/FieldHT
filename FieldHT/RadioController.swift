@@ -90,7 +90,14 @@ public class RadioController: ObservableObject {
         
         let regionNames = try await hydrateChannels(deviceInfo: deviceInfo, status: status)
         
-        let beaconSettings = try await connection.getBeaconSettings()
+        // Load beacon settings with timeout - don't block hydration
+        var beaconSettings = BeaconSettings.empty()
+        let beaconTask = Task {
+            beaconSettings = try await connection.getBeaconSettings()
+        }
+        // Wait max 1 second for beacon settings, then continue
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        beaconTask.cancel()
 
         // Register event handler if not already done
         _ = connection.addEventHandler { [weak self] event in
@@ -280,7 +287,12 @@ public class RadioController: ObservableObject {
     public func position() async throws -> Position {
         return try await connection.getPosition()
     }
-    
+
+    /// Get beacon settings
+    public func getBeaconSettings() async throws -> BeaconSettings {
+        return try await connection.getBeaconSettings()
+    }
+
     /// Set beacon settings
     public func setBeaconSettings(_ settings: BeaconSettings) async throws {
         guard var currentState = state else {
@@ -307,6 +319,21 @@ public class RadioController: ObservableObject {
         await MainActor.run {
             self.state = currentState
         }
+    }
+
+    // MARK: - Power & Scan Commands
+
+    public func setHTOnOff(_ isOn: Bool) async throws {
+        try await connection.setHTOnOff(isOn)
+    }
+
+    public func setRadioMode(_ mode: Int) async throws {
+        try await connection.setRadioMode(mode)
+    }
+
+    public func toggleScan() async throws {
+        // 12 is the PFEffectType for TOGGLE_CH_SCAN in DO_PROG_FUNC
+        try await connection.executePFAction(12)
     }
 
     // MARK: - Satellite mode (reverse-engineered)
@@ -514,6 +541,20 @@ public class RadioController: ObservableObject {
     /// Set PF configuration
     public func setPF(_ config: PFConfig) async throws {
         try await connection.setPF(config)
+    }
+
+    // MARK: - Beacon Settings
+
+    // MARK: - Volume Control
+
+    /// Get the current volume level (0-100)
+    public func volume() async throws -> Int {
+        return try await connection.getVolume()
+    }
+
+    /// Set the volume level (0-100)
+    public func setVolume(_ level: Int) async throws {
+        try await connection.setVolume(level)
     }
 }
 

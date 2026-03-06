@@ -45,10 +45,19 @@ struct SettingsView: View {
                                 } label: {
                                     Label("Programmable Buttons", systemImage: "button.programmable")
                                 }
+
+                                NavigationLink {
+                                    BeaconSettingsView()
+                                        .environmentObject(radioManager)
+                                } label: {
+                                    Label("APRS / Packet Beaconing", systemImage: "location.fill")
+                                }
                             } else {
                                 Label("Channels & Memory Groups", systemImage: "list.number")
                                     .foregroundColor(.secondary)
                                 Label("Programmable Buttons", systemImage: "button.programmable")
+                                    .foregroundColor(.secondary)
+                                Label("APRS / Packet Beaconing", systemImage: "location.fill")
                                     .foregroundColor(.secondary)
                             }
                         } header: {
@@ -123,6 +132,13 @@ struct SettingsView: View {
                                 Text("On").tag(1)
                             } label: {
                                 Label("HM Speaker", systemImage: "speaker.wave.3")
+                            }
+
+                            Toggle(isOn: Binding(
+                                get: { viewModel.settings?.pairingAtPowerOn ?? false },
+                                set: { viewModel.updatePairingAtPowerOn($0) }
+                            )) {
+                                Label("Pairing at Power On", systemImage: "link.badge.plus")
                             }
                         } header: {
                             Label("Audio", systemImage: "speaker.wave.2")

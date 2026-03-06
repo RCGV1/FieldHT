@@ -15,7 +15,7 @@ public class SettingsViewModel: ObservableObject {
     @Published public var isLoading: Bool = false
     @Published public var errorMessage: String?
     @Published public var isSaving: Bool = false
-    
+
     // PF (Programmable Function) settings
     @Published public var pfConfig: PFConfig?
     @Published public var isPFLoading: Bool = false
@@ -392,8 +392,8 @@ public class SettingsViewModel: ObservableObject {
         current.doubleChannel = value
         updateSettings(current)
     }
-    
-    // MARK: - PF (Programmable Function) Settings
+
+    /// Update NOAA Weather Channel
     
     /// Load PF configuration from the radio
     public func loadPFConfig() {

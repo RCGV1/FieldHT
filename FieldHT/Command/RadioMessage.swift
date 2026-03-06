@@ -19,6 +19,7 @@ public enum ReplyMessage {
     case beaconSettings(BeaconSettings)
     case regionName(String)
     case pf(PFConfig)
+    case volume(Int)
     case success
     case error(ReplyStatus, String)
 }

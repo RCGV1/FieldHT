@@ -125,7 +125,9 @@ public class CommandConnection: BLEConnectionDelegate {
                         let isQuietBasicReply = (message.commandGroup == .basic) && (
                             message.command == BasicCommand.freqModeSetPar.rawValue ||
                             message.command == BasicCommand.freqModeGetStatus.rawValue ||
-                            message.command == BasicCommand.satModeSetInfo.rawValue
+                            message.command == BasicCommand.satModeSetInfo.rawValue ||
+                            message.command == BasicCommand.writeBSSSettings.rawValue ||
+                            message.command == BasicCommand.setVolume.rawValue
                         )
                         if !isQuietBasicReply {
                             print("[BLE-RX] Unhandled reply: Grp=\(message.commandGroup) Cmd=\(message.command)")
@@ -380,6 +382,29 @@ public class CommandConnection: BLEConnectionDelegate {
             }
             return .success
 
+        case (.basic, BasicCommand.getVolume.rawValue):
+            let replyStatus = try decodeReplyStatus(message.body)
+            guard replyStatus == .success else {
+                return .error(replyStatus, "Failed to get volume")
+            }
+            let bodyData = message.body.dropFirst(1)
+            guard let firstByte = bodyData.first else {
+                print("[BLE-WARN] Volume response empty after status byte")
+                return .volume(0)
+            }
+            // Radio returns 0-255, convert to 0-100 for iOS
+            let radioVolume = Int(firstByte)
+            let iosVolume = (radioVolume * 100) / 255
+            print("[BLE-RX] Volume: radio=\(radioVolume), ios=\(iosVolume)")
+            return .volume(iosVolume)
+
+        case (.basic, BasicCommand.setVolume.rawValue):
+            let replyStatus = try decodeReplyStatus(message.body)
+            guard replyStatus == .success else {
+                return .error(replyStatus, "Failed to set volume")
+            }
+            return .success
+
         default:
             return .error(.notSupported, "Unknown reply type")
         }
@@ -588,6 +613,43 @@ public class CommandConnection: BLEConnectionDelegate {
         }
     }
     
+    public func setHTOnOff(_ isOn: Bool) async throws {
+        let body = ProtocolEncoder.encodeSetHTOnOff(isOn)
+        let reply = try await sendCommandAndWaitForReply(
+            commandGroup: .basic,
+            command: BasicCommand.setHTOnOff.rawValue,
+            body: body
+        )
+        guard case .reply(.success) = reply else {
+            throw ProtocolError.invalidReply
+        }
+    }
+
+
+    public func setRadioMode(_ mode: Int) async throws {
+        let body = ProtocolEncoder.encodeRadioSetMode(mode)
+        let reply = try await sendCommandAndWaitForReply(
+            commandGroup: .basic,
+            command: BasicCommand.radioSetMode.rawValue,
+            body: body
+        )
+        guard case .reply(.success) = reply else {
+            throw ProtocolError.invalidReply
+        }
+    }
+    
+    public func executePFAction(_ effect: Int) async throws {
+        let body = ProtocolEncoder.encodeDoProgFunc(effect)
+        let reply = try await sendCommandAndWaitForReply(
+            commandGroup: .basic,
+            command: BasicCommand.doProgFunc.rawValue,
+            body: body
+        )
+        guard case .reply(.success) = reply else {
+            throw ProtocolError.invalidReply
+        }
+    }
+    
     public func getStatus() async throws -> Status {
         let body = Data()
         let reply = try await sendCommandAndWaitForReply(
@@ -689,7 +751,45 @@ public class CommandConnection: BLEConnectionDelegate {
         
         return position
     }
-    
+
+    // MARK: - Volume Control
+
+    /// Get the current volume level (0-100)
+    public func getVolume() async throws -> Int {
+        let body = Data()
+        let reply = try await sendCommandAndWaitForReply(
+            commandGroup: .basic,
+            command: BasicCommand.getVolume.rawValue,
+            body: body
+        )
+
+        guard case .reply(.volume(let volume)) = reply else {
+            if case .reply(.error(let status, let message)) = reply {
+                throw ProtocolError.commandFailed(status, message)
+            }
+            throw ProtocolError.invalidReply
+        }
+
+        return volume
+    }
+
+    /// Set the volume level (0-100)
+    public func setVolume(_ level: Int) async throws {
+        let body = ProtocolEncoder.encodeSetVolume(level)
+        let reply = try await sendCommandAndWaitForReply(
+            commandGroup: .basic,
+            command: BasicCommand.setVolume.rawValue,
+            body: body
+        )
+
+        guard case .reply(.success) = reply else {
+            if case .reply(.error(let status, let message)) = reply {
+                throw ProtocolError.commandFailed(status, message)
+            }
+            throw ProtocolError.invalidReply
+        }
+    }
+
     public func enableEvent(_ eventType: EventType) async throws {
         print("[EVENT] Enabling event type: \(eventType) (fire-and-forget)")
         let body = ProtocolEncoder.encodeRegisterNotification(eventType)
@@ -857,7 +957,7 @@ public class CommandConnection: BLEConnectionDelegate {
             throw ProtocolError.invalidReply
         }
     }
-    
+
     public func setRegionChannel(regionID: Int, channelID: Int) async throws {
         let body = ProtocolEncoder.encodeWriteRegionChannel(regionID: regionID, channelID: channelID)
         let reply = try await sendCommandAndWaitForReply(

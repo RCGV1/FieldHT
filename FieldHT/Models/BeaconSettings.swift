@@ -25,22 +25,22 @@ public enum PacketFormat: String, Codable, CaseIterable {
 
 /// Beacon settings
 public struct BeaconSettings: Codable, Equatable {
-    public let maxFwdTimes: Int
-    public let timeToLive: Int
-    public let pttReleaseSendLocation: Bool
-    public let pttReleaseSendIDInfo: Bool
-    public let pttReleaseSendBSSUserID: Bool
-    public let shouldShareLocation: Bool
-    public let sendPwrVoltage: Bool
-    public let packetFormat: PacketFormat
-    public let allowPositionCheck: Bool
-    public let aprsSSID: Int
-    public let locationShareInterval: Int
-    public let bssUserID: Int
-    public let pttReleaseIDInfo: String
-    public let beaconMessage: String
-    public let aprsSymbol: String
-    public let aprsCallsign: String
+    public var maxFwdTimes: Int
+    public var timeToLive: Int
+    public var pttReleaseSendLocation: Bool
+    public var pttReleaseSendIDInfo: Bool
+    public var pttReleaseSendBSSUserID: Bool
+    public var shouldShareLocation: Bool
+    public var sendPwrVoltage: Bool
+    public var packetFormat: PacketFormat
+    public var allowPositionCheck: Bool
+    public var aprsSSID: Int
+    public var locationShareInterval: Int
+    public var bssUserID: Int
+    public var pttReleaseIDInfo: String
+    public var beaconMessage: String
+    public var aprsSymbol: String
+    public var aprsCallsign: String
     
     public init(
         maxFwdTimes: Int,

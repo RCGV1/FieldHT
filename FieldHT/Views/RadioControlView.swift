@@ -265,7 +265,6 @@ struct RadioControlView: View {
             // MARK: - RSSI Gauge
             rssiGaugeSection
 
-            // MARK: - Amateur Satellite Tracking
             NavigationLink {
                 SatelliteTrackingView()
                     .environmentObject(radioManager)
@@ -284,10 +283,9 @@ struct RadioControlView: View {
                 }
                 .padding()
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(.secondarySystemBackground))
+                .background(Color(uiColor: .secondarySystemBackground))
                 .cornerRadius(12)
             }
-
             Spacer()
         }
         .padding()
@@ -317,21 +315,25 @@ struct RadioControlView: View {
             Text("Quick Toggles")
                 .font(.headline)
 
-            Toggle(
-                isOn: Binding(
-                    get: { currentActiveChannelForTalkAround()?.talkAround ?? false },
-                    set: { newValue in
-                        guard var channel = currentActiveChannelForTalkAround() else { return }
-                        channel.talkAround = newValue
-                        radioManager.updateChannel(channel)
-                    }
-                )
-            ) {
-                Label("Talk Around", systemImage: "arrow.triangle.2.circlepath")
+            HStack {
+                Toggle(
+                    isOn: Binding(
+                        get: { currentActiveChannelForTalkAround()?.talkAround ?? false },
+                        set: { newValue in
+                            guard var channel = currentActiveChannelForTalkAround() else { return }
+                            channel.talkAround = newValue
+                            radioManager.updateChannel(channel)
+                        }
+                    )
+                ) {
+                    Label("Talk Around", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(!radioManager.isConnected || radioManager.isBusy || currentActiveChannelForTalkAround() == nil)
+                
+                Spacer()
             }
-            .disabled(!radioManager.isConnected || radioManager.isBusy || currentActiveChannelForTalkAround() == nil)
             .padding()
-            .background(Color(.secondarySystemBackground))
+            .background(Color(uiColor: .secondarySystemBackground))
             .cornerRadius(12)
         }
     }
@@ -376,12 +378,14 @@ struct RadioControlView: View {
             localSquelchLevel = radioManager.squelchLevel
             viewModel.setRadioController(radioManager.radioController)
             
-            // Only hydrate if we don't have state yet or if coming from a fresh appear
-            if radioManager.isConnected && radioManager.radioController?.state != nil {
-                viewModel.loadChannels()
-            } else {
+            // Ensure channels are loaded - hydrate if needed
+            if radioManager.isConnected {
                 Task {
-                    try? await radioManager.radioController?.hydrate()
+                    // Check if we need to hydrate (no state loaded yet)
+                    let needsHydrate = radioManager.radioController?.state == nil
+                    if needsHydrate {
+                        try? await radioManager.radioController?.hydrate()
+                    }
                     viewModel.loadChannels()
                 }
             }
@@ -536,7 +540,7 @@ struct VFOControl: View {
         }
         .padding()
         .frame(height: 180)
-        .background(Color(.secondarySystemBackground))
+        .background(Color(uiColor: .secondarySystemBackground))
         .cornerRadius(12)
         .overlay(
             RoundedRectangle(cornerRadius: 12)
@@ -545,152 +549,3 @@ struct VFOControl: View {
     }
 }
 
-//
-// MARK: - Channel Selection
-//
-struct ChannelSelectionView: View {
-    @ObservedObject var viewModel: ChannelViewModel
-    let selectedID: Int
-    let onSelect: (Int) -> Void
-    
-    @Environment(\.presentationMode) private var presentationMode
-    
-    var body: some View {
-        List {
-
-            ForEach(viewModel.channels, id: \.channelID) { channel in
-                HStack {
-                    Text(String(format: "%03d", channel.channelID + 1))
-                        .font(.caption)
-                        .monospacedDigit()
-                        .padding(4)
-                        .background(Color.gray.opacity(0.2))
-                        .cornerRadius(4)
-
-                    VStack(alignment: .leading) {
-                        Text(channel.name.isEmpty
-                             ? "Channel \(channel.channelID + 1)"
-                             : channel.name)
-                            .font(.headline)
-                        Text(String(format: "%.5f MHz", channel.rxFreq))
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-
-                    Spacer()
-
-                    if channel.channelID == selectedID {
-                        Image(systemName: "checkmark")
-                            .foregroundColor(.blue)
-                    }
-                }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    onSelect(channel.channelID)
-                    presentationMode.wrappedValue.dismiss()
-                }
-            }
-        }
-        .navigationTitle("Select Channel")
-    }
-}
-
-struct VFOEditSheet: View {
-    let channel: Channel
-    let onUpdate: (Channel) -> Void
-    @Environment(\.dismiss) var dismiss
-    
-    @State private var rxFreqString: String
-    @State private var txFreqString: String
-    @State private var isSimplex: Bool
-    @State private var bandwidth: BandwidthType
-    @State private var txPowerMax: Bool
-    
-    init(channel: Channel, onUpdate: @escaping (Channel) -> Void) {
-        self.channel = channel
-        self.onUpdate = onUpdate
-        _rxFreqString = State(initialValue: String(format: "%.5f", channel.rxFreq))
-        _txFreqString = State(initialValue: String(format: "%.5f", channel.txFreq))
-        _isSimplex = State(initialValue: abs(channel.rxFreq - channel.txFreq) < 0.00001)
-        _bandwidth = State(initialValue: channel.bandwidth)
-        _txPowerMax = State(initialValue: channel.txAtMaxPower)
-    }
-    
-    var body: some View {
-        NavigationView {
-            Form {
-                Section(header: Text("Frequency")) {
-                    HStack {
-                        Text("RX Freq")
-                        Spacer()
-                        TextField("145.000", text: $rxFreqString)
-                            .font(.system(size: 24, weight: .bold, design: .monospaced))
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .onChange(of: rxFreqString) { newValue in
-                                if isSimplex {
-                                    txFreqString = newValue
-                                }
-                            }
-                    }
-                    
-                    Toggle("Simplex (TX=RX)", isOn: $isSimplex)
-                        .onChange(of: isSimplex) { newValue in
-                            if newValue {
-                                txFreqString = rxFreqString
-                            }
-                        }
-                    
-                    if !isSimplex {
-                        HStack {
-                            Text("TX Freq")
-                            Spacer()
-                            TextField("145.600", text: $txFreqString)
-                                .font(.system(size: 24, weight: .bold, design: .monospaced))
-                                .keyboardType(.decimalPad)
-                                .multilineTextAlignment(.trailing)
-                        }
-                    }
-                }
-                
-                Section(header: Text("Transmission")) {
-                    Picker("Bandwidth", selection: $bandwidth) {
-                        Text("Narrow (12.5k)").tag(BandwidthType.narrow)
-                        Text("Wide (25k)").tag(BandwidthType.wide)
-                    }
-                    
-                    Toggle("High Power", isOn: $txPowerMax)
-                }
-                
-                Section(footer: Text("Changes will be sent to the radio immediately on save.")) {
-                     Button("Save Settings") {
-                         save()
-                     }
-                     .frame(maxWidth: .infinity)
-                     .foregroundColor(.orange)
-                }
-            }
-            .navigationTitle("VFO Config")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-            }
-        }
-    }
-
-    private func save() {
-        if var rx = Double(rxFreqString), var tx = Double(isSimplex ? rxFreqString : txFreqString) {
-            var updated = channel
-            updated.rxFreq = rx
-            updated.txFreq = tx
-            updated.bandwidth = bandwidth
-            updated.txAtMaxPower = txPowerMax
-            onUpdate(updated)
-            dismiss()
-        }
-    }
-}
