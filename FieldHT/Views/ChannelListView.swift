@@ -21,6 +21,7 @@ struct ChannelListView: View {
     @State private var showImportPicker = false
     @State private var isImporting = false
     @State private var importError: String?
+    @State private var insertTarget: Channel? = nil   // pending insert-before confirmation
 
     private let maxRetries = 3
 
@@ -62,7 +63,7 @@ struct ChannelListView: View {
                     Text("No channels found")
                         .foregroundColor(.secondary)
                 } else {
-                    ForEach(viewModel.channels, id: \.channelID) { channel in
+                    ForEach(viewModel.regularChannels, id: \.channelID) { channel in
                         NavigationLink(destination: ChannelDetailView(channel: channel, viewModel: viewModel)) {
                             HStack {
                                 Text(String(format: "%03d", channel.channelID + 1))
@@ -88,12 +89,53 @@ struct ChannelListView: View {
                                 }
                             }
                         }
-                        .disabled(isHydrating || isImporting)
+                        .disabled(isHydrating || isImporting || viewModel.isSaving)
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
                                 viewModel.deleteChannel(channel)
                             } label: {
                                 Label("Delete", systemImage: "trash")
+                            }
+                        }
+                        .swipeActions(edge: .leading) {
+                            Button {
+                                if viewModel.insertWouldOverwrite(before: channel.channelID) {
+                                    insertTarget = channel
+                                } else {
+                                    viewModel.insertEmptyChannel(before: channel.channelID)
+                                }
+                            } label: {
+                                Label("Insert Before", systemImage: "plus.rectangle.portrait.on.rectangle.portrait")
+                            }
+                            .tint(.blue)
+                        }
+                    }
+                    .onMove { source, destination in
+                        viewModel.moveChannels(fromOffsets: source, toOffset: destination)
+                    }
+
+                    if !viewModel.vfoChannels.isEmpty {
+                        Section(header: Text("VFO")) {
+                            ForEach(viewModel.vfoChannels, id: \.channelID) { channel in
+                                NavigationLink(destination: ChannelDetailView(channel: channel, viewModel: viewModel)) {
+                                    HStack {
+                                        Text("VFO")
+                                            .font(.caption)
+                                            .monospacedDigit()
+                                            .padding(4)
+                                            .background(Color.blue.opacity(0.15))
+                                            .cornerRadius(4)
+
+                                        VStack(alignment: .leading) {
+                                            Text(channel.name.isEmpty ? (channel.channelID == 252 ? "VFO A" : "VFO B") : channel.name)
+                                                .font(.headline)
+                                            Text(String(format: "%.5f MHz", channel.rxFreq))
+                                                .font(.subheadline)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                }
+                                .disabled(isHydrating || isImporting || viewModel.isSaving)
                             }
                         }
                     }
@@ -111,10 +153,10 @@ struct ChannelListView: View {
                     }
                 }
             }
-            .blur(radius: isHydrating || isImporting ? 3 : 0)
+            .blur(radius: isHydrating || isImporting || viewModel.isSaving ? 3 : 0)
 
-            // Hydration/Import loading overlay
-            if isHydrating || isImporting {
+            // Hydration/Import/Saving loading overlay
+            if isHydrating || isImporting || viewModel.isSaving {
                 ZStack {
                     Color.black.opacity(0.3)
                         .ignoresSafeArea()
@@ -126,6 +168,8 @@ struct ChannelListView: View {
 
                         Text(isImporting
                             ? "Importing channels..."
+                            : viewModel.isSaving
+                            ? "Saving to radio..."
                             : retryCount > 0
                             ? "Syncing with radio... (Attempt \(retryCount + 1)/\(maxRetries))"
                             : "Syncing with radio...")
@@ -142,6 +186,20 @@ struct ChannelListView: View {
             }
         }
         .navigationTitle("Channels")
+        .alert("Last Channel Will Be Overwritten", isPresented: Binding(
+            get: { insertTarget != nil },
+            set: { if !$0 { insertTarget = nil } }
+        )) {
+            Button("Insert Anyway", role: .destructive) {
+                if let target = insertTarget {
+                    viewModel.insertEmptyChannel(before: target.channelID)
+                }
+                insertTarget = nil
+            }
+            Button("Cancel", role: .cancel) { insertTarget = nil }
+        } message: {
+            Text("Inserting here will shift all channels down by one slot. The channel currently at slot 30 will be lost. Continue?")
+        }
         .onAppear {
             let controller = radioController ?? radioManager.radioController
             viewModel.setRadioController(controller)

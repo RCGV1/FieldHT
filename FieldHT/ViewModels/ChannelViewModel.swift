@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import SwiftUI
 
 /// View model for managing radio channels
 @MainActor
@@ -229,6 +230,95 @@ public class ChannelViewModel: ObservableObject {
         channels = allChannels
     }
     
+    // MARK: - Reorder & Insert
+
+    /// Regular memory channels (excluding VFO slots at 251/252), sorted by slot.
+    public var regularChannels: [Channel] {
+        channels.filter { $0.channelID < 250 }.sorted { $0.channelID < $1.channelID }
+    }
+
+    /// VFO channels (slot IDs ≥ 250), sorted by slot.
+    public var vfoChannels: [Channel] {
+        channels.filter { $0.channelID >= 250 }.sorted { $0.channelID < $1.channelID }
+    }
+
+    /// Reorder channels by swapping hardware slot contents.
+    /// Called from List.onMove; writes only the slots whose content changed.
+    public func moveChannels(fromOffsets source: IndexSet, toOffset destination: Int) {
+        guard let radioController else { return }
+        let regular = regularChannels
+        let originalSlots = regular.map { $0.channelID }
+
+        var reordered = regular
+        reordered.move(fromOffsets: source, toOffset: destination)
+
+        var toWrite: [Channel] = []
+        for (i, content) in reordered.enumerated() {
+            let targetSlot = originalSlots[i]
+            guard content.channelID != targetSlot else { continue }
+            var updated = content
+            updated.channelID = targetSlot
+            toWrite.append(updated)
+        }
+        guard !toWrite.isEmpty else { return }
+
+        isSaving = true
+        Task {
+            do {
+                for ch in toWrite { try await radioController.setChannel(ch) }
+                try await radioController.hydrateChannels()
+                await MainActor.run { self.loadChannels(); self.isSaving = false }
+            } catch {
+                await MainActor.run {
+                    self.isSaving = false
+                    self.errorMessage = "Reorder failed: \(error.localizedDescription)"
+                    self.loadChannels()
+                }
+            }
+        }
+    }
+
+    /// Returns true if inserting before `channelID` would overwrite the last occupied slot (slot 29).
+    public func insertWouldOverwrite(before channelID: Int) -> Bool {
+        let regular = regularChannels
+        guard regular.firstIndex(where: { $0.channelID == channelID }) != nil else { return false }
+        guard let last = regular.last, last.channelID == 29 else { return false }
+        return !(last.rxFreq == 0 && last.txFreq == 0 && last.name.isEmpty)
+    }
+
+    /// Shift channels from `channelID` onward down by one slot and write an empty channel at that slot.
+    public func insertEmptyChannel(before channelID: Int) {
+        guard let radioController else { return }
+        let regular = regularChannels
+        guard let insertIdx = regular.firstIndex(where: { $0.channelID == channelID }) else { return }
+
+        let insertionSlotID = regular[insertIdx].channelID
+        let channelsToShift = Array(regular[insertIdx...])
+
+        isSaving = true
+        Task {
+            do {
+                // Write in reverse so we never overwrite a source before it has been copied
+                for ch in channelsToShift.reversed() {
+                    let newSlotID = ch.channelID + 1
+                    guard newSlotID < 30 else { continue }   // slot 30+ doesn't exist — last slot drops
+                    var shifted = ch
+                    shifted.channelID = newSlotID
+                    try await radioController.setChannel(shifted)
+                }
+                try await radioController.setChannel(Channel.empty(channelID: insertionSlotID))
+                try await radioController.hydrateChannels()
+                await MainActor.run { self.loadChannels(); self.isSaving = false }
+            } catch {
+                await MainActor.run {
+                    self.isSaving = false
+                    self.errorMessage = "Insert failed: \(error.localizedDescription)"
+                    self.loadChannels()
+                }
+            }
+        }
+    }
+
     /// Set current active region
     public func setActiveRegion(_ index: Int) {
         guard let radioController = radioController else { return }

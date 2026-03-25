@@ -124,6 +124,7 @@ struct ConnectView: View {
                     systemImage: scanner.isScanning ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash",
                     description: Text(scanner.isScanning ? "Looking for nearby radios..." : "Make sure your radio is in pairing mode.")
                 )
+                pairingInstructionsSection
             } else {
                 ForEach(scanner.discoveredDevices) { device in
                     deviceRow(for: device)
@@ -181,6 +182,61 @@ struct ConnectView: View {
             }
         }
         .disabled(radioManager.isConnecting || radioManager.isConnected)
+    }
+
+    // MARK: - Pairing Instructions
+
+    private var pairingInstructionsSection: some View {
+        Section("How to Enter Pairing Mode") {
+            VStack(alignment: .leading, spacing: 12) {
+                Label {
+                    Text("Power on your UV-PRO")
+                        .font(.subheadline)
+                } icon: {
+                    stepBadge("1")
+                }
+
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("On the radio: Menu → Bluetooth → Pair")
+                            .font(.subheadline)
+                        Text("The LEDs will alternate red/green to confirm pairing mode is active")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } icon: {
+                    stepBadge("2")
+                }
+
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Keep the radio within 1 metre of your iPhone")
+                            .font(.subheadline)
+                        Text("Do not pair via iPhone Settings → Bluetooth — use this screen only")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } icon: {
+                    stepBadge("3")
+                }
+
+                Label {
+                    Text("Pull down to refresh if the radio doesn't appear")
+                        .font(.subheadline)
+                } icon: {
+                    stepBadge("4")
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func stepBadge(_ label: String) -> some View {
+        Text(label)
+            .font(.caption.bold())
+            .foregroundColor(.white)
+            .frame(width: 22, height: 22)
+            .background(Color.accentColor, in: Circle())
     }
 
     // MARK: - Scanning Logic
