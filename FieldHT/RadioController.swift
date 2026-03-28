@@ -90,14 +90,14 @@ public class RadioController: ObservableObject {
         
         let regionNames = try await hydrateChannels(deviceInfo: deviceInfo, status: status)
         
-        // Load beacon settings with timeout - don't block hydration
-        var beaconSettings = BeaconSettings.empty()
-        let beaconTask = Task {
-            beaconSettings = try await connection.getBeaconSettings()
+        // Load beacon settings with a 1-second timeout — don't block hydration.
+        // Use a typed task so we await the result safely instead of mutating a shared local var.
+        let beaconTask = Task<BeaconSettings, Error> {
+            return try await connection.getBeaconSettings()
         }
-        // Wait max 1 second for beacon settings, then continue
         try? await Task.sleep(nanoseconds: 1_000_000_000)
         beaconTask.cancel()
+        let beaconSettings = (try? await beaconTask.value) ?? BeaconSettings.empty()
 
         // Register event handler if not already done
         _ = connection.addEventHandler { [weak self] event in
@@ -243,7 +243,7 @@ public class RadioController: ObservableObject {
         }
         
         let currentRegion = currentState.status.currRegion
-        var regionDict = self.channels[currentRegion] ?? [:]
+        let regionDict = self.channels[currentRegion] ?? [:]
         var channel: Channel
         if let existing = regionDict[channelID] {
             channel = existing

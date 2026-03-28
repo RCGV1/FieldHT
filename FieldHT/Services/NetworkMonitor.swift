@@ -23,8 +23,11 @@ public class NetworkMonitor: ObservableObject {
     
     private func startMonitoring() {
         monitor.pathUpdateHandler = { [weak self] path in
-            Task { @MainActor in
-                self?.isConnected = path.status == .satisfied
+            // Capture the value before hopping to MainActor to avoid a mutable
+            // self capture in a Sendable closure (Swift 6 error).
+            let connected = path.status == .satisfied
+            Task { @MainActor [weak self] in
+                self?.isConnected = connected
             }
         }
         monitor.start(queue: queue)

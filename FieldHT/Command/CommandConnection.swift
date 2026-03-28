@@ -288,11 +288,20 @@ public class CommandConnection: BLEConnectionDelegate {
             
             switch type {
             case .batteryVoltage:
-                return .batteryVoltage(value as! Double)
+                guard let v = value as? Double else {
+                    throw ProtocolError.decodeError("Expected Double for batteryVoltage")
+                }
+                return .batteryVoltage(v)
             case .batteryLevel:
-                return .batteryLevel(value as! Int)
+                guard let v = value as? Int else {
+                    throw ProtocolError.decodeError("Expected Int for batteryLevel")
+                }
+                return .batteryLevel(v)
             case .batteryLevelAsPercentage:
-                return .batteryLevelAsPercentage(value as! Int)
+                guard let v = value as? Int else {
+                    throw ProtocolError.decodeError("Expected Int for batteryLevelAsPercentage")
+                }
+                return .batteryLevelAsPercentage(v)
             case .rcBatteryLevel:
                 return .error(.success, "RC battery level not implemented in reply")
             case .unknown:

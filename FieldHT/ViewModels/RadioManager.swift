@@ -8,6 +8,7 @@
 import Foundation
 import Combine
 import SwiftUI
+import UserNotifications
 
 /// Manages the radio connection state and provides access to radio control
 @MainActor
@@ -67,6 +68,7 @@ public class RadioManager: ObservableObject {
     
     @Published public var batteryVoltage: Double = 0.0
     @Published public var batteryLevel: Int = 0
+    private var hasNotifiedLowBattery = false
     
     @Published public var isBusy: Bool = false
     @Published public var errorMessage: String?
@@ -373,12 +375,44 @@ public class RadioManager: ObservableObject {
     
     private func refreshBattery() async throws {
         guard let controller = radioController else { return }
-        // Battery info isn't part of the main state struct usually, unless we add it to status
-        // So we keep fetching it explicitly.
         let volts = try await controller.batteryVoltage()
         let level = try await controller.batteryLevelAsPercentage()
         self.batteryVoltage = volts
         self.batteryLevel = level
+
+        // Fire a low-battery notification once when crossing below 10%.
+        // Reset the flag when the battery recovers above 15% (e.g. plugged in).
+        if level > 15 {
+            hasNotifiedLowBattery = false
+        } else if level <= 10 && level > 0 && !hasNotifiedLowBattery {
+            hasNotifiedLowBattery = true
+            try? await UNUserNotificationCenter.current().add(lowBatteryNotificationRequest(level: level))
+        }
+    }
+
+    private func lowBatteryNotificationRequest(level: Int) -> UNNotificationRequest {
+        let content = UNMutableNotificationContent()
+        content.title = "Radio Battery Low"
+        content.body = "Battery is at \(level)%. Enable Low Power Mode to extend usage."
+        content.sound = .default
+        content.categoryIdentifier = NotificationManager.lowBatteryCategoryID
+        return UNNotificationRequest(identifier: "com.fieldHT.lowBattery", content: content, trigger: nil)
+    }
+
+    /// Enable low power (power saving) mode on the radio.
+    public func enableLowPowerMode() {
+        guard let controller = radioController, var settings = controller.state?.settings else { return }
+        settings.powerSavingMode = true
+        isBusy = true
+        Task {
+            do {
+                try await controller.setSettings(settings)
+                isBusy = false
+            } catch {
+                errorMessage = "Failed to enable low power mode: \(error.localizedDescription)"
+                isBusy = false
+            }
+        }
     }
     
     // MARK: - Actions
@@ -624,9 +658,6 @@ public class RadioManager: ObservableObject {
         txCTCSSHz: Double?,
         for channel: ChannelType
     ) {
-        #if DEBUG
-        // Intentionally quiet: this can be called at high frequency.
-        #endif
         guard let controller = radioController else { return }
 
         let vfoID = channel == .a ? 252 : 251
@@ -647,21 +678,7 @@ public class RadioManager: ObservableObject {
                 ch.txFreq = txMHz
                 ch.rxSubAudio = rxCTCSSHz.map { .frequency($0) }
                 ch.txSubAudio = txCTCSSHz.map { .frequency($0) }
-                #if DEBUG
-                // Intentionally quiet: avoid noisy debug logs.
-                #endif
                 try await controller.setChannel(ch)
-
-                #if DEBUG
-                // Only verify-readback when we are actually trying to apply a tone.
-                if (rxCTCSSHz ?? -1) > 0 || (txCTCSSHz ?? -1) > 0 {
-                    if let verified = controller.channelsForCurrentRegion.first(where: { $0.channelID == vfoID }) {
-                        // Intentionally quiet: avoid noisy debug logs.
-                    } else {
-                        // Intentionally quiet: avoid noisy debug logs.
-                    }
-                }
-                #endif
                 isBusy = false
             } catch {
                 errorMessage = "Failed to set VFO tones: \(error.localizedDescription)"

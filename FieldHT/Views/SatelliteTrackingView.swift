@@ -8,6 +8,7 @@ struct SatelliteTrackingView: View {
     @State private var mapCamera: MapCameraPosition = .automatic
     @State private var pendingRecenterSatId: Int?
     @State private var isMapExpanded: Bool = false
+    @State private var showingSearch: Bool = false
 
     private var selectedCoordinate: CLLocationCoordinate2D? {
         guard let first = vm.selectedPositions.first else { return nil }
@@ -121,9 +122,20 @@ struct SatelliteTrackingView: View {
 
     var body: some View {
         List {
+            // MARK: Map
+            Section {
+                mapCard
+                    .frame(height: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+            } header: {
+                header
+            }
+
+            // MARK: Tracking controls
             Section {
                 if !vm.isLocationAuthorized {
-                    Text("Location is required to compute passes and pointing.")
+                    Label("Location access required for pass computation.", systemImage: "location.slash")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -138,26 +150,21 @@ struct SatelliteTrackingView: View {
                         .font(.caption)
                 }
 
-                mapCard
-                    .frame(height: 220)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-
                 trackingControls
-            } header: {
-                header
             }
 
+            // MARK: Favorites
             Section {
                 if vm.favoriteSatellites.isEmpty {
-                    Text("Tap Add favorites or swipe a satellite in Discover to favorite it.")
+                    Text("No favorites yet. Use the search button to add satellites.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
 
-                NavigationLink {
-                    SatelliteSearchView(vm: vm)
+                Button {
+                    showingSearch = true
                 } label: {
-                    Label("Add favorites", systemImage: "star.badge.plus")
+                    Label("Add satellite", systemImage: "star.badge.plus")
                 }
 
                 ForEach(vm.favoriteSatellites) { sat in
@@ -310,6 +317,11 @@ struct SatelliteTrackingView: View {
         }
         .listStyle(.insetGrouped)
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingSearch) {
+            NavigationStack {
+                SatelliteSearchView(vm: vm)
+            }
+        }
         .sheet(isPresented: $isMapExpanded) {
             NavigationStack {
                 mapContent
@@ -329,6 +341,13 @@ struct SatelliteTrackingView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showingSearch = true
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Refresh") { vm.refreshAbove() }
                     .disabled(vm.observerLocation == nil)

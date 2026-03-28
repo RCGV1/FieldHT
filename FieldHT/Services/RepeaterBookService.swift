@@ -104,7 +104,7 @@ public final class RepeaterBookService {
 
         var request = URLRequest(url: url)
         // RepeaterBook API requires User-Agent with program name and email
-        request.setValue("FieldHT/1.0 (benjaminfaer@gmail.com)", forHTTPHeaderField: "User-Agent")
+        request.setValue("FieldHT/1.0 (contact@fieldht.app)", forHTTPHeaderField: "User-Agent")
         
         let (data, response) = try await URLSession.shared.data(for: request)
         

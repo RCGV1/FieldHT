@@ -36,7 +36,7 @@ struct VFOEditSheet: View {
                             .keyboardType(.decimalPad)
                             #endif
                             .multilineTextAlignment(.trailing)
-                            .onChange(of: rxFreqString) { newValue in
+                            .onChange(of: rxFreqString) { _, newValue in
                                 if isSimplex {
                                     txFreqString = newValue
                                 }
@@ -44,7 +44,7 @@ struct VFOEditSheet: View {
                     }
 
                     Toggle("Simplex (TX=RX)", isOn: $isSimplex)
-                        .onChange(of: isSimplex) { newValue in
+                        .onChange(of: isSimplex) { _, newValue in
                             if newValue {
                                 txFreqString = rxFreqString
                             }

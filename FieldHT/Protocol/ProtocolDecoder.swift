@@ -48,8 +48,8 @@ public struct ProtocolDecoder {
         let supportDmr = try stream.readBool()
         let channelCount = try stream.readInt(8)
         let freqRangeCount = try stream.readInt(4)
-        let supportNoiseReduction = try stream.readBool()
-        let supportSmartBeacon = try stream.readBool()
+        _ = try stream.readBool() // supportNoiseReduction (not in DeviceInfo model)
+        _ = try stream.readBool() // supportSmartBeacon (not in DeviceInfo model)
         _ = try stream.readInt(2) // pad
         
         return DeviceInfo(
@@ -162,11 +162,11 @@ public struct ProtocolDecoder {
         let doubleChannel = ChannelType.fromProtocolValue(doubleChannelRaw)
         let isScan = try stream.readBool()
         let isRadio = try stream.readBool()
-        var currChIDLower = try stream.readInt(4)
+        let currChIDLower = try stream.readInt(4)
         let isGPSLocked = try stream.readBool()
         let isHFPConnected = try stream.readBool()
         let isAOCConnected = try stream.readBool()
-        let unknown = try stream.readInt(1)
+        _ = try stream.readInt(1) // reserved
         
         // Check if extended status
         var currChIDUpper = 0

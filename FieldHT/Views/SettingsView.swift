@@ -43,7 +43,7 @@ struct SettingsView: View {
                                 NavigationLink {
                                     PFSettingsView(radioController: radioController, viewModel: viewModel)
                                 } label: {
-                                    Label("Programmable Buttons", systemImage: "button.programmable")
+                                    Label("Programmable Buttons", systemImage: "button.vertical.left.press")
                                 }
 
                                 NavigationLink {
@@ -134,12 +134,6 @@ struct SettingsView: View {
                                 Label("HM Speaker", systemImage: "speaker.wave.3")
                             }
 
-                            Toggle(isOn: Binding(
-                                get: { viewModel.settings?.pairingAtPowerOn ?? false },
-                                set: { viewModel.updatePairingAtPowerOn($0) }
-                            )) {
-                                Label("Pairing at Power On", systemImage: "link.badge.plus")
-                            }
                         } header: {
                             Label("Audio", systemImage: "speaker.wave.2")
                         }

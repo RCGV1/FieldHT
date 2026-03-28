@@ -9,7 +9,7 @@ import SwiftUI
 import SwiftData
 
 struct MainTabView: View {
-    @StateObject private var radioManager = RadioManager()
+    @EnvironmentObject private var radioManager: RadioManager
 
       var body: some View {
           NavigationStack {
@@ -30,7 +30,6 @@ struct MainTabView: View {
                           Label("Settings", systemImage: "gearshape.fill")
                       }
               }
-              .environmentObject(radioManager)
               .toolbar {
                   ToolbarItem(placement: .topBarTrailing) {
                       if radioManager.isConnected {
@@ -45,4 +44,5 @@ struct MainTabView: View {
 
   #Preview {
       MainTabView()
+          .environmentObject(RadioManager())
   }

@@ -4,6 +4,20 @@
 //
 
 import SwiftUI
+import TipKit
+
+
+struct ButtonTip: Tip {
+    var title: Text {
+        Text("Edit button actions")
+    }
+    var message: Text? {
+        Text("Press the button image to switch which button you are editing")
+    }
+    var image: Image? {
+        Image(systemName: "button.vertical.left.press.fill")
+    }
+}
 
 struct PFSettingsView: View {
     @ObservedObject var viewModel: SettingsViewModel
@@ -75,36 +89,35 @@ struct PFSettingsView: View {
                                 // Button Images
                                 HStack(spacing: 20) {
                                     Button(action: {
-                                        selectedButtonIndex = 0
+                                        if selectedButtonIndex == 0 {
+                                            selectedButtonIndex = 1
+                                        } else {
+                                            selectedButtonIndex = 0
+                                        }
                                     }) {
-                                        Image(selectedButtonIndex == 0 ? "ButtonsSelectOne" : "Buttons")
+                                        Image(selectedButtonIndex == 0 ? "ButtonsSelectOne" : "ButtonSelectTwo")
                                             .resizable()
                                             .aspectRatio(contentMode: .fit)
                                             .frame(height: 80)
                                     }
                                     .buttonStyle(.plain)
 
-                                    if buttonIDs.count > 1 {
-                                        Button(action: {
-                                            selectedButtonIndex = 1
-                                        }) {
-                                            Image(selectedButtonIndex == 1 ? "ButtonSelectTwo" : "Buttons")
-                                                .resizable()
-                                                .aspectRatio(contentMode: .fit)
-                                                .frame(height: 80)
-                                        }
-                                        .buttonStyle(.plain)
-                                    }
                                 }
                                 
                                 Text("Selected Button \(selectedButtonIndex + 1)")
                                     .font(.headline)
                                     .foregroundColor(.secondary)
+                                
+                                TipView(ButtonTip())
+                                    .padding()
+
                             }
                             Spacer()
                         }
                         .padding(.vertical, 8)
                     }
+                    
+                
 
                     // Trigger -> Action mapping
                     Section(header: Text("Trigger Actions")) {

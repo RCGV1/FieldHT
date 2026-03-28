@@ -997,9 +997,7 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
         case .offlineFreshTLE:
             return "Cache"
         case .offlineStaleTLE:
-            return "Cache"
-        case .offlineStaleTLE:
-            return "Net"
+            return "Cache (stale)"
         case .unknown:
             return ""
         }

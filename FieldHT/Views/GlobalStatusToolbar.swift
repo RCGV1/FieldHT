@@ -64,22 +64,18 @@ struct GlobalStatusToolbar: View {
     }
     
     private var batteryIcon: String {
-        if radioManager.batteryLevel > 75 {
-            return "battery.100"
-        } else if radioManager.batteryLevel > 50 {
-            return "battery.75"
-        } else if radioManager.batteryLevel > 25 {
-            return "battery.50"
-        } else {
-            return "battery.25"
-        }
+        let level = radioManager.batteryLevel
+        if level > 75 { return "battery.100" }
+        if level > 50 { return "battery.75" }
+        if level > 25 { return "battery.50" }
+        if level > 10 { return "battery.25" }
+        return "battery.0"
     }
-    
+
     private var batteryColor: Color {
-        if radioManager.batteryLevel > 25 {
-            return .green
-        } else {
-            return .red
-        }
+        let level = radioManager.batteryLevel
+        if level > 25 { return .green }
+        if level > 10 { return .orange }
+        return .red
     }
 }

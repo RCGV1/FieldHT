@@ -192,7 +192,10 @@ struct OfflineSatPosition: Equatable {
 }
 
 enum OfflineTLEPropagator {
-    static func positions(
+    // These are pure CPU-bound computations with no UI state access.
+    // Mark nonisolated so they can be called from off-actor contexts (e.g. withTaskGroup)
+    // without triggering the project-wide @MainActor default isolation.
+    nonisolated static func positions(
         tle: TLERecord,
         observer: CLLocation,
         start: Date,
@@ -239,7 +242,7 @@ enum OfflineTLEPropagator {
 #endif
     }
 
-    static func positionsSampled(
+    nonisolated static func positionsSampled(
         tle: TLERecord,
         observer: CLLocation,
         start: Date,

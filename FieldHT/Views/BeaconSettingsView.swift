@@ -9,11 +9,11 @@ import SwiftUI
 
 struct BeaconSettingsView: View {
     @EnvironmentObject var radioManager: RadioManager
-    @Environment(\.dismiss) var dismiss
-    
+
     @State private var isLoading = false
     @State private var isSaving = false
     @State private var settings: BeaconSettings?
+    @State private var loadError: String?
     
     // Binding states
     @State private var packetFormat: PacketFormat = .bss
@@ -43,6 +43,22 @@ struct BeaconSettingsView: View {
                         Spacer()
                     }
                 }
+            } else if let loadError = loadError {
+                VStack(spacing: 20) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 60))
+                        .foregroundColor(.red)
+                    Text("Failed to Load")
+                        .font(.title2).fontWeight(.semibold)
+                    Text(loadError)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                    Button("Retry") { loadSettings() }
+                        .padding(.top)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if settings != nil {
                 Section(header: Text("Protocol Formatting")) {
                     Picker("Format", selection: $packetFormat) {
@@ -53,7 +69,7 @@ struct BeaconSettingsView: View {
                     .pickerStyle(.segmented)
                 }
                 
-                Section(header: Text("APRS Settings"), footer: Text("Enter your amateur radio callsign, optional SSID, and 2-character APRS symbol (e.g. /> for car).")) {
+                Section(header: Text("APRS Settings"), footer: Text("Enter your amateur radio callsign, optional SSID, and 2-character APRS symbol")) {
                     TextField("Callsign", text: $aprsCallsign)
                         .textInputAutocapitalization(.characters)
                         .disableAutocorrection(true)
@@ -66,8 +82,9 @@ struct BeaconSettingsView: View {
                             .multilineTextAlignment(.trailing)
                     }
                     
-                    TextField("Symbol (e.g. />)", text: $aprsSymbol)
-                        .disableAutocorrection(true)
+                    APRSSymbolRow(selectedCode: aprsSymbol) { sym in
+                        aprsSymbol = sym.code
+                    }
                 }
                 
                 Section(header: Text("Beacon Info")) {
@@ -110,29 +127,34 @@ struct BeaconSettingsView: View {
                     }
                 }
                 
-                Section {
-                    Button(action: saveSettings) {
-                        HStack {
-                            Spacer()
-                            if isSaving {
-                                ProgressView()
-                            } else {
-                                Text("Save Settings")
-                                    .fontWeight(.bold)
-                            }
-                            Spacer()
-                        }
-                    }
-                    .disabled(isSaving)
-                }
             } else {
-                Section {
-                    Text("Failed to load beacon settings. Make sure the radio is connected.")
-                        .foregroundColor(.red)
+                ContentUnavailableView {
+                    Label("Not Connected", systemImage: "antenna.radiowaves.left.and.right.slash")
+                } description: {
+                    Text("Connect to a radio device to load beacon settings")
                 }
             }
         }
         .navigationTitle("APRS / Packet Beaconing")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                if isSaving {
+                    ProgressView()
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Save") { saveSettings() }
+                    .disabled(isSaving || isLoading || settings == nil)
+            }
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    loadSettings()
+                } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                }
+                .disabled(isLoading || isSaving)
+            }
+        }
         .onAppear {
             loadSettings()
         }
@@ -141,41 +163,35 @@ struct BeaconSettingsView: View {
     private func loadSettings() {
         guard radioManager.isConnected else { return }
         isLoading = true
-        
+        loadError = nil
+
         Task {
             do {
                 if radioManager.radioController?.state == nil {
-                     try? await radioManager.radioController?.hydrate()
+                    try? await radioManager.radioController?.hydrate()
                 }
                 let currentSettings = try await radioManager.getBeaconSettings()
-                
-                await MainActor.run {
-                    self.settings = currentSettings
-                    
-                    self.packetFormat = currentSettings.packetFormat
-                    self.aprsCallsign = currentSettings.aprsCallsign.trimmingCharacters(in: .whitespacesAndNewlines)
-                    self.aprsSSID = currentSettings.aprsSSID
-                    self.aprsSymbol = currentSettings.aprsSymbol.trimmingCharacters(in: .whitespacesAndNewlines)
-                    self.beaconMessage = currentSettings.beaconMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-                    
-                    self.shouldShareLocation = currentSettings.shouldShareLocation
-                    self.pttReleaseSendLocation = currentSettings.pttReleaseSendLocation
-                    self.pttReleaseSendIDInfo = currentSettings.pttReleaseSendIDInfo
-                    self.pttReleaseSendBSSUserID = currentSettings.pttReleaseSendBSSUserID
-                    self.sendPwrVoltage = currentSettings.sendPwrVoltage
-                    self.allowPositionCheck = currentSettings.allowPositionCheck
-                    
-                    self.locationShareInterval = currentSettings.locationShareInterval
-                    self.timeToLive = currentSettings.timeToLive
-                    self.maxFwdTimes = currentSettings.maxFwdTimes
-                    
-                    self.isLoading = false
-                }
+
+                self.settings = currentSettings
+                self.packetFormat = currentSettings.packetFormat
+                self.aprsCallsign = currentSettings.aprsCallsign.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.aprsSSID = currentSettings.aprsSSID
+                self.aprsSymbol = currentSettings.aprsSymbol.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.beaconMessage = currentSettings.beaconMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.shouldShareLocation = currentSettings.shouldShareLocation
+                self.pttReleaseSendLocation = currentSettings.pttReleaseSendLocation
+                self.pttReleaseSendIDInfo = currentSettings.pttReleaseSendIDInfo
+                self.pttReleaseSendBSSUserID = currentSettings.pttReleaseSendBSSUserID
+                self.sendPwrVoltage = currentSettings.sendPwrVoltage
+                self.allowPositionCheck = currentSettings.allowPositionCheck
+                self.locationShareInterval = currentSettings.locationShareInterval
+                self.timeToLive = currentSettings.timeToLive
+                self.maxFwdTimes = currentSettings.maxFwdTimes
+                self.isLoading = false
             } catch {
                 print("Error loading beacon settings: \(error)")
-                await MainActor.run {
-                    self.isLoading = false
-                }
+                self.loadError = error.localizedDescription
+                self.isLoading = false
             }
         }
     }
@@ -204,16 +220,11 @@ struct BeaconSettingsView: View {
         Task {
             do {
                 try await radioManager.setBeaconSettings(updatedSettings)
-                await MainActor.run {
-                    isSaving = false
-                    dismiss()
-                }
+                self.settings = updatedSettings
+                isSaving = false
             } catch {
                 print("Error saving beacon settings: \(error)")
-                await MainActor.run {
-                    isSaving = false
-                    // Could add an error alert here
-                }
+                isSaving = false
             }
         }
     }

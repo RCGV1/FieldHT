@@ -1,5 +1,5 @@
 import Foundation
-import CoreBluetooth
+@preconcurrency import CoreBluetooth
 import Combine
 
 // MARK: - Radio Service UUID
@@ -115,13 +115,13 @@ public final class BLEScanner: NSObject, ObservableObject {
     private func checkForPreviouslyPairedDevice() {
         // Check if we have a previously paired device
         guard let lastUUID = lastPairedDeviceUUID else { return }
-        
+
         // Try to retrieve the peripheral by UUID
         let peripherals = centralManager.retrievePeripherals(withIdentifiers: [lastUUID])
-        
+
         guard let peripheral = peripherals.first else {
-            // Device not found, clear it
-            clearLastPairedDevice()
+            // Device not currently visible — it may just be out of range or BT just powered on.
+            // Do NOT clear the saved UUID here; the user should not be forced to re-pair.
             return
         }
         

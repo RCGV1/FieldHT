@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SatelliteSearchView: View {
     @ObservedObject var vm: SatelliteTrackingViewModel
+    @Environment(\.dismiss) private var dismiss
     @State private var searchText: String = ""
 
     private var trimmed: String {
@@ -11,17 +12,10 @@ struct SatelliteSearchView: View {
     var body: some View {
         List {
             Section {
-                Text("Search by name or NORAD id, then add to Favorites.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
                 if vm.isSearching {
                     ProgressView()
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            }
-
-            Section {
                 if trimmed.isEmpty {
                     Text("Start typing to search.")
                         .font(.caption)
@@ -77,6 +71,11 @@ struct SatelliteSearchView: View {
         }
         .navigationTitle("Add Favorites")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Done") { dismiss() }
+            }
+        }
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Name or NORAD")
         .onChange(of: searchText) {
             vm.updateSearch(searchText)

@@ -390,13 +390,27 @@ struct RadioControlView: View {
                 }
             }
         }
+        .onChange(of: radioManager.isConnected) { _, isConnected in
+            if isConnected {
+                viewModel.setRadioController(radioManager.radioController)
+                Task {
+                    let needsHydrate = radioManager.radioController?.state == nil
+                    if needsHydrate {
+                        try? await radioManager.radioController?.hydrate()
+                    }
+                    viewModel.loadChannels()
+                }
+            } else {
+                viewModel.setRadioController(nil)
+            }
+        }
         .onChange(of: radioManager.activeRegionIndex) { oldVal, newVal in
             if oldVal != newVal {
                 viewModel.loadChannels()
             }
         }
-        .onChange(of: radioManager.squelchLevel) {
-            localSquelchLevel = $0
+        .onChange(of: radioManager.squelchLevel) { _, newValue in
+            localSquelchLevel = newValue
         }
     }
 
@@ -438,9 +452,12 @@ struct RadioControlView: View {
     }
 
     private func setActiveChannel(_ index: Int) {
-        radioManager.activeChannel == .a
-        ? radioManager.setChannelA(index)
-        : radioManager.setChannelB(index)
+        // .off means dual watch is disabled and A is the active channel
+        if radioManager.activeChannel == .b {
+            radioManager.setChannelB(index)
+        } else {
+            radioManager.setChannelA(index)
+        }
     }
 }
 //
