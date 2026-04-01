@@ -19,7 +19,7 @@ struct ParsedChannel {
     @Guide(description: "Receive frequency in MHz, e.g. 146.520")
     var rxFreqMHz: Double
 
-    @Guide(description: "Transmit frequency in MHz. Same as rxFreqMHz for simplex.")
+    @Guide(description: "Transmit (uplink) frequency in MHz. MUST equal rxFreqMHz for simplex. For repeaters apply the standard offset to rxFreqMHz. NEVER use 0.")
     var txFreqMHz: Double
 
     @Guide(description: "TX CTCSS/PL tone in Hz, e.g. 100.0. Use 0.0 if none.")
@@ -82,18 +82,32 @@ enum AIChannelImporter {
         let prompt = """
         Extract all ham radio repeater and channel entries from the document below.
 
-        For each channel:
-        - name: short label \u{2264}10 chars (abbreviate if needed)
-        - rxFreqMHz: receive/downlink frequency in MHz (e.g. 146.520)
-        - txFreqMHz: transmit/uplink frequency. For repeaters without explicit TX freq, calculate it using standard offsets: +0.600 MHz for VHF (144\u{2013}148 MHz), \u{2013}0.600 MHz for some, +5.000 MHz for UHF (440\u{2013}450 MHz). For simplex, same as rxFreqMHz.
-        - txCtcssHz: TX CTCSS/PL tone in Hz if listed (e.g. 100.0), else 0.0
-        - rxCtcssHz: RX CTCSS/PL tone in Hz if listed, else 0.0
-        - narrowBand: true for NFM/12.5 kHz, false for FM/25 kHz (default false)
-        - rxOnly: true only if explicitly marked as receive-only or monitor
+        Rules — follow these exactly:
 
-        Only include entries with valid amateur radio frequencies (50\u{2013}1300 MHz).
+        name: ≤10 characters. Abbreviate callsign or location if needed.
+
+        rxFreqMHz: The receive (output/downlink) frequency in MHz. e.g. 146.520
+
+        txFreqMHz: The transmit (input/uplink) frequency in MHz.
+          • NEVER set this to 0.
+          • Simplex channel: txFreqMHz = rxFreqMHz exactly.
+          • Repeater with explicit TX freq listed: use that value.
+          • Repeater with only an offset listed (e.g. "+600", "-600", "+5.0"):
+              txFreqMHz = rxFreqMHz + offset_in_MHz
+          • Repeater with no offset or TX freq listed, infer from band:
+              VHF 144–148 MHz: txFreqMHz = rxFreqMHz + 0.600
+              UHF 440–450 MHz: txFreqMHz = rxFreqMHz + 5.000
+              1.2 GHz 1240–1300 MHz: txFreqMHz = rxFreqMHz + 12.000
+              All other bands (simplex default): txFreqMHz = rxFreqMHz
+
+        txCtcssHz: TX CTCSS/PL tone in Hz (e.g. 100.0). Use 0.0 if none.
+        rxCtcssHz: RX CTCSS/PL tone in Hz. Use 0.0 if none.
+        narrowBand: true for NFM / 12.5 kHz. false for FM / 25 kHz. Default false.
+        rxOnly: true ONLY if explicitly marked receive-only or monitor. Otherwise false.
+
+        Only include entries with valid amateur radio frequencies (50–1300 MHz).
         Skip header rows, totals, notes, and non-channel lines.
-        Max 30 channels.
+        Maximum 30 channels.
 
         Document:
         \(text.prefix(6000))
@@ -104,7 +118,17 @@ enum AIChannelImporter {
         statusUpdate("Processing results\u{2026}")
 
         let channels: [Channel] = response.content.channels.enumerated().compactMap { index, parsed in
-            guard (50...1300).contains(parsed.rxFreqMHz) else { return nil }
+            let rxFreq = parsed.rxFreqMHz
+            guard (50.0...1300.0).contains(rxFreq) else { return nil }
+
+            // Hard fallback: if model returned an invalid TX freq (0 or out of band),
+            // infer it from the standard band offset rather than leaving it broken.
+            let txFreq: Double
+            if (50.0...1300.0).contains(parsed.txFreqMHz) {
+                txFreq = parsed.txFreqMHz
+            } else {
+                txFreq = Self.inferTxFreq(fromRx: rxFreq)
+            }
 
             let txSubAudio: SubAudio? = parsed.txCtcssHz > 0 ? .frequency(parsed.txCtcssHz) : nil
             let rxSubAudio: SubAudio? = parsed.rxCtcssHz > 0 ? .frequency(parsed.rxCtcssHz) : nil
@@ -112,9 +136,9 @@ enum AIChannelImporter {
             return Channel(
                 channelID: index,
                 txMod: .fm,
-                txFreq: parsed.txFreqMHz,
+                txFreq: txFreq,
                 rxMod: .fm,
-                rxFreq: parsed.rxFreqMHz,
+                rxFreq: rxFreq,
                 txSubAudio: txSubAudio,
                 rxSubAudio: rxSubAudio,
                 scan: true,
@@ -138,6 +162,21 @@ enum AIChannelImporter {
         }
 
         return channels
+    }
+
+    // MARK: - Frequency Helpers
+
+    /// Infers the standard TX (uplink) frequency from a repeater's RX (output) frequency.
+    /// Returns rxFreq unchanged for simplex bands or unrecognised frequencies.
+    private static func inferTxFreq(fromRx rx: Double) -> Double {
+        switch rx {
+        case 144.0..<148.0: return rx + 0.600   // 2 m repeater input
+        case 222.0..<225.0: return rx + 1.600   // 1.25 m repeater input
+        case 440.0..<450.0: return rx + 5.000   // 70 cm repeater input
+        case 902.0..<928.0: return rx + 25.000  // 33 cm repeater input
+        case 1240.0..<1300.0: return rx + 12.000 // 23 cm repeater input
+        default:            return rx            // simplex / unknown → use RX
+        }
     }
 
     // MARK: - Text Extraction
