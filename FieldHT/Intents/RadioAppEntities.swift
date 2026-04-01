@@ -25,7 +25,7 @@ struct ZoneEntity: AppEntity {
     var zoneIndex: Int { Int(id) ?? 0 }
 }
 
-struct ZoneQuery: EntityQuery {
+struct ZoneQuery: EntityStringQuery {
     func entities(for identifiers: [String]) async throws -> [ZoneEntity] {
         let names = await MainActor.run {
             RadioIntentBridge.shared.manager?.regionNames ?? []
@@ -41,6 +41,17 @@ struct ZoneQuery: EntityQuery {
             RadioIntentBridge.shared.manager?.regionNames ?? []
         }
         return names.enumerated().map { ZoneEntity(id: String($0.offset), name: $0.element) }
+    }
+
+    /// Resolves a spoken or typed string (e.g. "ARES") to matching zones.
+    func entities(matching string: String) async throws -> [ZoneEntity] {
+        let names = await MainActor.run {
+            RadioIntentBridge.shared.manager?.regionNames ?? []
+        }
+        let query = string.lowercased()
+        return names.enumerated()
+            .filter { $0.element.lowercased().contains(query) }
+            .map { ZoneEntity(id: String($0.offset), name: $0.element) }
     }
 }
 
@@ -67,7 +78,7 @@ struct ChannelEntity: AppEntity {
     var channelID: Int { Int(id) ?? 0 }
 }
 
-struct ChannelQuery: EntityQuery {
+struct ChannelQuery: EntityStringQuery {
     func entities(for identifiers: [String]) async throws -> [ChannelEntity] {
         let channels = await MainActor.run {
             RadioIntentBridge.shared.manager?.channels ?? []
@@ -87,6 +98,17 @@ struct ChannelQuery: EntityQuery {
         return channels.filter { $0.channelID < 250 }.map {
             ChannelEntity(id: String($0.channelID), name: $0.name, frequency: $0.rxFreq)
         }
+    }
+
+    /// Resolves a spoken or typed channel name (e.g. "Repeater 1") to matching channels.
+    func entities(matching string: String) async throws -> [ChannelEntity] {
+        let channels = await MainActor.run {
+            RadioIntentBridge.shared.manager?.channels ?? []
+        }
+        let query = string.lowercased()
+        return channels
+            .filter { $0.channelID < 250 && $0.name.lowercased().contains(query) }
+            .map { ChannelEntity(id: String($0.channelID), name: $0.name, frequency: $0.rxFreq) }
     }
 }
 
