@@ -369,8 +369,14 @@ struct RadioControlView: View {
     }
 
     var body: some View {
-        ScrollView {
-            mainContent
+        Group {
+            if radioManager.isConnected {
+                ScrollView {
+                    mainContent
+                }
+            } else {
+                NotConnectedView()
+            }
         }
         .navigationTitle("Radio Control")
         .disabled(radioManager.isBusy)

@@ -21,11 +21,7 @@ struct SettingsView: View {
         ZStack {
             Group {
                 if !radioManager.isConnected {
-                    ContentUnavailableView {
-                        Label("Not Connected", systemImage: "antenna.radiowaves.left.and.right.slash")
-                    } description: {
-                        Text("Connect to a radio device to view and edit settings")
-                    }
+                    NotConnectedView()
                 } else if viewModel.isLoading {
                     ProgressView("Loading settings...")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
