@@ -122,7 +122,11 @@ enum AIChannelImporter {
         \(text.prefix(6000))
         """
 
-        let freqResponse = try await freqSession.respond(to: freqPrompt, generating: ParsedChannelFreqList.self)
+        let freqResponse = try await freqSession.respond(
+            to: freqPrompt,
+            generating: ParsedChannelFreqList.self,
+            options: GenerationOptions(sampling: .greedy)
+        )
         let parsedFreqs = freqResponse.content.channels
 
         print("[AIImport] Pass 1 — \(parsedFreqs.count) channel(s)")
@@ -162,7 +166,11 @@ enum AIChannelImporter {
         \(text.prefix(6000))
         """
 
-        let toneResponse = try await toneSession.respond(to: tonePrompt, generating: ParsedToneList.self)
+        let toneResponse = try await toneSession.respond(
+            to: tonePrompt,
+            generating: ParsedToneList.self,
+            options: GenerationOptions(sampling: .greedy)
+        )
         let parsedTones = toneResponse.content.tones
 
         print("[AIImport] Pass 2 — \(parsedTones.count) tone pair(s)")
