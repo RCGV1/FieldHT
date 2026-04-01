@@ -122,9 +122,17 @@ enum AIChannelImporter {
 
         statusUpdate("Processing results\u{2026}")
 
+        print("[AIImport] Model returned \(response.content.channels.count) raw channel(s)")
+        for (i, p) in response.content.channels.enumerated() {
+            print("[AIImport][\(i)] name=\(p.name) rx=\(p.rxFreqMHz) tx=\(p.txFreqMHz) txTone=\(p.txToneHz) rxTone=\(p.rxToneHz) narrow=\(p.narrowBand) rxOnly=\(p.rxOnly)")
+        }
+
         let channels: [Channel] = response.content.channels.enumerated().compactMap { index, parsed in
             let rxFreq = parsed.rxFreqMHz
-            guard (50.0...1300.0).contains(rxFreq) else { return nil }
+            guard (50.0...1300.0).contains(rxFreq) else {
+                print("[AIImport][\(index)] DROPPED — rxFreq \(rxFreq) out of range")
+                return nil
+            }
 
             // Hard fallback: if model returned an invalid TX freq (0 or out of band),
             // infer it from the standard band offset rather than leaving it broken.
@@ -132,13 +140,16 @@ enum AIChannelImporter {
             if (50.0...1300.0).contains(parsed.txFreqMHz) {
                 txFreq = parsed.txFreqMHz
             } else {
-                txFreq = Self.inferTxFreq(fromRx: rxFreq)
+                let inferred = Self.inferTxFreq(fromRx: rxFreq)
+                print("[AIImport][\(index)] txFreq \(parsed.txFreqMHz) invalid — inferred \(inferred) from rx \(rxFreq)")
+                txFreq = inferred
             }
 
             // txToneHz / rxToneHz have a hard .range(0.0...254.1) token-masking constraint,
             // so invalid values cannot be generated. Still treat 0.0 as "no tone".
             let txSubAudio: SubAudio? = parsed.txToneHz > 0 ? .frequency(parsed.txToneHz) : nil
             let rxSubAudio: SubAudio? = parsed.rxToneHz > 0 ? .frequency(parsed.rxToneHz) : nil
+            print("[AIImport][\(index)] final → rx=\(rxFreq) tx=\(txFreq) txTone=\(parsed.txToneHz) rxTone=\(parsed.rxToneHz)")
 
             return Channel(
                 channelID: index,
