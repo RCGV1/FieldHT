@@ -17,17 +17,18 @@ import PDFKit
 
 @Generable(description: "A single ham radio channel — name and frequencies only")
 struct ParsedChannelFreq {
-    // Scratchpad first — model reasons through column mapping before committing to values.
-    @Guide(description: "Briefly identify: what column holds the RX frequency, what column holds the TX frequency or offset (if any), and what the TX frequency for this channel is. E.g. 'RX col=Frequency, TX col=none, band=VHF so TX=RX+0.600=148.575'")
-    var reasoning: String
-
     @Guide(description: "Channel name, 10 characters max")
     var name: String
 
     @Guide(description: "Receive (output/downlink) frequency in MHz, e.g. 146.520", .range(50.0...1300.0))
     var rxFreqMHz: Double
 
-    @Guide(description: "Transmit (input/uplink) frequency in MHz. Read directly from the document if listed. For repeaters with no explicit TX, apply the standard band offset (VHF +0.600, UHF +5.000, etc.). For simplex, use rxFreqMHz.", .range(50.0...1300.0))
+    // Reasoning comes AFTER rxFreqMHz so the model has committed this channel's
+    // specific RX value and can compute the correct per-channel TX from it.
+    @Guide(description: "Given the rxFreqMHz above, state what TX frequency this specific channel uses. If the document lists a TX freq or offset, use it. Otherwise apply the band offset. Format: 'TX=<value> because <reason>'. E.g. 'TX=148.575 because VHF, 147.975+0.600'")
+    var reasoning: String
+
+    @Guide(description: "Transmit (input/uplink) frequency in MHz. Must match the value you computed in reasoning.", .range(50.0...1300.0))
     var txFreqMHz: Double
 
     @Guide(description: "True for narrow band 12.5 kHz NFM, false for wide 25 kHz FM")
@@ -147,7 +148,7 @@ enum AIChannelImporter {
         statusUpdate("Extracting tones\u{2026}")
 
         let channelList = parsedFreqs.enumerated()
-            .map { i, ch in "\(i). \(ch.name) (\(String(format: "%.3f", ch.rxFreqMHz)) MHz)" }
+            .map { i, ch in "\(i). \(ch.name) — RX \(String(format: "%.3f", ch.rxFreqMHz)) MHz" }
             .joined(separator: "\n")
 
         let toneSession = LanguageModelSession(
@@ -163,8 +164,9 @@ enum AIChannelImporter {
         )
 
         let tonePrompt = """
-        Find the TX and RX CTCSS/PL tone for each channel below.
-        Return exactly \(parsedFreqs.count) entries in the same order.
+        Find the CTCSS/PL tone for each channel below. Match each channel by its RX frequency.
+        Return exactly \(parsedFreqs.count) entries in the same order as the channel list.
+        Use 0.0 for any channel with no tone (CSQ / carrier squelch).
 
         Channels:
         \(channelList)
