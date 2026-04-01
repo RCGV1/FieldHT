@@ -85,9 +85,17 @@ enum AIChannelImporter {
             instructions: """
             You are a ham radio channel list parser.
 
-            Channel frequencies are in MHz (megahertz), e.g. 146.520 or 447.000.
-            CTCSS/PL tones are sub-audible squelch tones in Hz (hertz), e.g. 100.0 or 151.4. They are always between 67 and 254.
-            These are completely different measurements. Never write a MHz frequency into a tone field.
+            FREQUENCIES (rxFreqMHz / txFreqMHz):
+            - Always in MHz, e.g. 146.520 or 447.000. Always ≥ 50.0.
+
+            CTCSS / PL TONES (txToneHz / rxToneHz):
+            - Small numbers between 67 and 254, representing Hz, e.g. 100.0 or 151.4.
+            - In source documents these appear under column headers or labels such as:
+              "PL", "CTCSS", "Tone", "T-SQL", "TSQL", "Encode", "Decode",
+              "TX Tone", "RX Tone", "Squelch Tone", "Sub-tone", or just a bare number
+              in a tone column (e.g. 100.0, 127.3, 88.5).
+            - If a tone is listed, write it into txToneHz and/or rxToneHz.
+            - If no tone is listed for that channel, use 0.0.
 
             TX frequency rules:
             - Simplex: txFreqMHz = rxFreqMHz exactly.
