@@ -13,26 +13,30 @@ import PDFKit
 
 @Generable(description: "A single ham radio channel entry")
 struct ParsedChannel {
-    @Guide(description: "Channel name, max 10 characters")
+    // Frequencies first — generated first so they anchor everything that follows.
+    @Guide(description: "Channel name, 10 characters max")
     var name: String
 
-    @Guide(description: "Receive frequency in MHz, e.g. 146.520")
+    @Guide(description: "Receive (output/downlink) frequency in MHz, e.g. 146.520")
     var rxFreqMHz: Double
 
-    @Guide(description: "Transmit (uplink) frequency in MHz. MUST equal rxFreqMHz for simplex. For repeaters apply the standard offset to rxFreqMHz. NEVER use 0.")
+    @Guide(description: "Transmit (input/uplink) frequency in MHz. For simplex equals rxFreqMHz. For repeaters apply the band offset.")
     var txFreqMHz: Double
 
-    @Guide(description: "TX CTCSS/PL sub-tone in Hz. Valid range is 67.0–254.1 Hz (e.g. 100.0, 127.3, 151.4). This is NOT a frequency — it is a squelch tone. Use 0.0 if no tone is listed.")
-    var txCtcssHz: Double
-
-    @Guide(description: "RX CTCSS/PL sub-tone in Hz. Valid range is 67.0–254.1 Hz. Use 0.0 if none.")
-    var rxCtcssHz: Double
-
-    @Guide(description: "true for 12.5 kHz NFM, false for 25 kHz FM")
+    // Booleans next — simple, unambiguous.
+    @Guide(description: "True for narrow band 12.5 kHz NFM, false for wide band 25 kHz FM")
     var narrowBand: Bool
 
-    @Guide(description: "true if receive-only (no transmit)")
+    @Guide(description: "True only if explicitly marked receive-only or monitor-only")
     var rxOnly: Bool
+
+    // Tones last — generated after frequencies are already committed, with hard range constraint.
+    // .range() uses token-masking: values outside 0.0–254.1 cannot be generated.
+    @Guide(description: "TX CTCSS/PL squelch tone in Hz, e.g. 100.0. Use 0.0 if no tone.", .range(0.0...254.1))
+    var txToneHz: Double
+
+    @Guide(description: "RX CTCSS/PL squelch tone in Hz. Use 0.0 if no tone.", .range(0.0...254.1))
+    var rxToneHz: Double
 }
 
 @Generable(description: "A list of parsed ham radio channels")
@@ -75,39 +79,32 @@ enum AIChannelImporter {
 
         statusUpdate("Analyzing with Apple Intelligence\u{2026}")
 
+        // instructions: sets persistent parsing rules for this session.
+        // Per WWDC guidance, put semantic rules here — not in the prompt.
         let session = LanguageModelSession(
-            instructions: "You are a ham radio channel list parser. Extract channel data precisely from the provided text."
+            instructions: """
+            You are a ham radio channel list parser.
+
+            Channel frequencies are in MHz (megahertz), e.g. 146.520 or 447.000.
+            CTCSS/PL tones are sub-audible squelch tones in Hz (hertz), e.g. 100.0 or 151.4. They are always between 67 and 254.
+            These are completely different measurements. Never write a MHz frequency into a tone field.
+
+            TX frequency rules:
+            - Simplex: txFreqMHz = rxFreqMHz exactly.
+            - Repeater with explicit TX freq or offset listed: apply it directly.
+            - Repeater with no TX info, infer from band:
+              VHF 144–148 MHz → txFreqMHz = rxFreqMHz + 0.600
+              UHF 440–450 MHz → txFreqMHz = rxFreqMHz + 5.000
+              1.2 GHz 1240–1300 MHz → txFreqMHz = rxFreqMHz + 12.000
+              All other bands → txFreqMHz = rxFreqMHz
+            """
         )
 
+        // prompt: just the task + raw document. The schema handles format.
         let prompt = """
-        Extract all ham radio repeater and channel entries from the document below.
-
-        Rules — follow these exactly:
-
-        name: ≤10 characters. Abbreviate callsign or location if needed.
-
-        rxFreqMHz: The receive (output/downlink) frequency in MHz. e.g. 146.520
-
-        txFreqMHz: The transmit (input/uplink) frequency in MHz.
-          • NEVER set this to 0.
-          • Simplex channel: txFreqMHz = rxFreqMHz exactly.
-          • Repeater with explicit TX freq listed: use that value.
-          • Repeater with only an offset listed (e.g. "+600", "-600", "+5.0"):
-              txFreqMHz = rxFreqMHz + offset_in_MHz
-          • Repeater with no offset or TX freq listed, infer from band:
-              VHF 144–148 MHz: txFreqMHz = rxFreqMHz + 0.600
-              UHF 440–450 MHz: txFreqMHz = rxFreqMHz + 5.000
-              1.2 GHz 1240–1300 MHz: txFreqMHz = rxFreqMHz + 12.000
-              All other bands (simplex default): txFreqMHz = rxFreqMHz
-
-        txCtcssHz: TX CTCSS/PL sub-tone in Hz. This is a squelch tone, NOT a channel frequency. Valid values are 67.0–254.1 Hz (e.g. 100.0, 127.3, 151.4). Use 0.0 if no tone is listed. Never put a MHz frequency here.
-        rxCtcssHz: RX CTCSS/PL sub-tone in Hz. Same rules — 67.0–254.1 Hz range, 0.0 if none.
-        narrowBand: true for NFM / 12.5 kHz. false for FM / 25 kHz. Default false.
-        rxOnly: true ONLY if explicitly marked receive-only or monitor. Otherwise false.
-
-        Only include entries with valid amateur radio frequencies (50–1300 MHz).
-        Skip header rows, totals, notes, and non-channel lines.
-        Maximum 30 channels.
+        Extract all ham radio channels from the document below.
+        Only include entries with valid amateur frequencies (50–1300 MHz).
+        Skip headers, notes, and non-channel lines. Maximum 30 channels.
 
         Document:
         \(text.prefix(6000))
@@ -130,11 +127,10 @@ enum AIChannelImporter {
                 txFreq = Self.inferTxFreq(fromRx: rxFreq)
             }
 
-            // CTCSS tones are 67.0–254.1 Hz. Reject anything outside this range —
-            // the model occasionally puts the TX/RX frequency here instead of the tone.
-            let validToneRange = 67.0...254.1
-            let txSubAudio: SubAudio? = validToneRange.contains(parsed.txCtcssHz) ? .frequency(parsed.txCtcssHz) : nil
-            let rxSubAudio: SubAudio? = validToneRange.contains(parsed.rxCtcssHz) ? .frequency(parsed.rxCtcssHz) : nil
+            // txToneHz / rxToneHz have a hard .range(0.0...254.1) token-masking constraint,
+            // so invalid values cannot be generated. Still treat 0.0 as "no tone".
+            let txSubAudio: SubAudio? = parsed.txToneHz > 0 ? .frequency(parsed.txToneHz) : nil
+            let rxSubAudio: SubAudio? = parsed.rxToneHz > 0 ? .frequency(parsed.rxToneHz) : nil
 
             return Channel(
                 channelID: index,
