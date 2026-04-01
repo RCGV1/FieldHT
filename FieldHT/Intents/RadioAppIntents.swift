@@ -223,7 +223,6 @@ struct FieldHTShortcuts: AppShortcutsProvider {
             intent: SetSquelchIntent(),
             phrases: [
                 "Set \(.applicationName) squelch",
-                "Set \(.applicationName) squelch to \(\.$level)",
             ],
             shortTitle: "Set Squelch",
             systemImageName: "speaker.wave.2"
@@ -260,7 +259,6 @@ struct FieldHTShortcuts: AppShortcutsProvider {
             intent: SetVolumeIntent(),
             phrases: [
                 "Set \(.applicationName) volume",
-                "Set \(.applicationName) volume to \(\.$volume)",
             ],
             shortTitle: "Set Volume",
             systemImageName: "speaker.3"
