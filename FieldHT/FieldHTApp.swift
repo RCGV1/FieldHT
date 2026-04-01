@@ -25,6 +25,7 @@ struct FieldHTApp: App {
                 .onAppear {
                     notificationManager.radioManager = radioManager
                     notificationManager.requestPermission()
+                    RadioIntentBridge.shared.manager = radioManager
                 }
                 .task {
                     try? Tips.configure([

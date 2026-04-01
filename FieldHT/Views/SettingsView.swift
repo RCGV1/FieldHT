@@ -368,6 +368,12 @@ struct SettingsView: View {
                         } header: {
                             Label("Advanced", systemImage: "wrench.and.screwdriver")
                         }
+
+                        Section {
+                            SupportDeveloperRow()
+                        } header: {
+                            Label("Support", systemImage: "heart")
+                        }
                     }
                     .disabled(viewModel.isSaving || isHydrating)
                 } else if let error = viewModel.errorMessage {
