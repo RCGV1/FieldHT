@@ -22,10 +22,10 @@ struct ParsedChannel {
     @Guide(description: "Transmit (uplink) frequency in MHz. MUST equal rxFreqMHz for simplex. For repeaters apply the standard offset to rxFreqMHz. NEVER use 0.")
     var txFreqMHz: Double
 
-    @Guide(description: "TX CTCSS/PL tone in Hz, e.g. 100.0. Use 0.0 if none.")
+    @Guide(description: "TX CTCSS/PL sub-tone in Hz. Valid range is 67.0–254.1 Hz (e.g. 100.0, 127.3, 151.4). This is NOT a frequency — it is a squelch tone. Use 0.0 if no tone is listed.")
     var txCtcssHz: Double
 
-    @Guide(description: "RX CTCSS/PL tone in Hz. Use 0.0 if none.")
+    @Guide(description: "RX CTCSS/PL sub-tone in Hz. Valid range is 67.0–254.1 Hz. Use 0.0 if none.")
     var rxCtcssHz: Double
 
     @Guide(description: "true for 12.5 kHz NFM, false for 25 kHz FM")
@@ -100,8 +100,8 @@ enum AIChannelImporter {
               1.2 GHz 1240–1300 MHz: txFreqMHz = rxFreqMHz + 12.000
               All other bands (simplex default): txFreqMHz = rxFreqMHz
 
-        txCtcssHz: TX CTCSS/PL tone in Hz (e.g. 100.0). Use 0.0 if none.
-        rxCtcssHz: RX CTCSS/PL tone in Hz. Use 0.0 if none.
+        txCtcssHz: TX CTCSS/PL sub-tone in Hz. This is a squelch tone, NOT a channel frequency. Valid values are 67.0–254.1 Hz (e.g. 100.0, 127.3, 151.4). Use 0.0 if no tone is listed. Never put a MHz frequency here.
+        rxCtcssHz: RX CTCSS/PL sub-tone in Hz. Same rules — 67.0–254.1 Hz range, 0.0 if none.
         narrowBand: true for NFM / 12.5 kHz. false for FM / 25 kHz. Default false.
         rxOnly: true ONLY if explicitly marked receive-only or monitor. Otherwise false.
 
@@ -130,8 +130,11 @@ enum AIChannelImporter {
                 txFreq = Self.inferTxFreq(fromRx: rxFreq)
             }
 
-            let txSubAudio: SubAudio? = parsed.txCtcssHz > 0 ? .frequency(parsed.txCtcssHz) : nil
-            let rxSubAudio: SubAudio? = parsed.rxCtcssHz > 0 ? .frequency(parsed.rxCtcssHz) : nil
+            // CTCSS tones are 67.0–254.1 Hz. Reject anything outside this range —
+            // the model occasionally puts the TX/RX frequency here instead of the tone.
+            let validToneRange = 67.0...254.1
+            let txSubAudio: SubAudio? = validToneRange.contains(parsed.txCtcssHz) ? .frequency(parsed.txCtcssHz) : nil
+            let rxSubAudio: SubAudio? = validToneRange.contains(parsed.rxCtcssHz) ? .frequency(parsed.rxCtcssHz) : nil
 
             return Channel(
                 channelID: index,
