@@ -137,23 +137,31 @@ enum AIChannelImporter {
                 return nil
             }
 
-            // txOffsetMHz is constrained to -30...+30 by token-masking, so no CTCSS bleed.
-            // Compute absolute TX and validate; fall back to band-inferred offset if result is out of band.
-            let computedTx = rxFreq + parsed.txOffsetMHz
+            // If the model found an explicit non-zero offset in the document, use it.
+            // If offset is 0 (model saw no explicit TX info), infer from band so repeaters
+            // get the correct uplink frequency instead of a simplex copy of RX.
             let txFreq: Double
-            if (50.0...1300.0).contains(computedTx) {
-                txFreq = computedTx
+            if parsed.txOffsetMHz != 0.0 {
+                let computed = rxFreq + parsed.txOffsetMHz
+                if (50.0...1300.0).contains(computed) {
+                    txFreq = computed
+                } else {
+                    let inferred = Self.inferTxFreq(fromRx: rxFreq)
+                    print("[AIImport][\(index)] computed tx \(computed) out of range — inferred \(inferred)")
+                    txFreq = inferred
+                }
             } else {
-                let inferred = Self.inferTxFreq(fromRx: rxFreq)
-                print("[AIImport][\(index)] computed tx \(computedTx) out of range — inferred \(inferred)")
-                txFreq = inferred
+                txFreq = Self.inferTxFreq(fromRx: rxFreq)
+                print("[AIImport][\(index)] offset=0 — inferred tx \(txFreq) from band")
             }
 
-            // txToneHz / rxToneHz have a hard .range(0.0...254.1) token-masking constraint,
-            // so invalid values cannot be generated. Still treat 0.0 as "no tone".
-            let txSubAudio: SubAudio? = parsed.txToneHz > 0 ? .frequency(parsed.txToneHz) : nil
-            let rxSubAudio: SubAudio? = parsed.rxToneHz > 0 ? .frequency(parsed.rxToneHz) : nil
-            print("[AIImport][\(index)] final → rx=\(rxFreq) tx=\(txFreq) offset=\(parsed.txOffsetMHz) txTone=\(parsed.txToneHz) rxTone=\(parsed.rxToneHz)")
+            // txToneHz / rxToneHz have a hard .range(0.0...254.1) token-masking constraint.
+            // If only one tone is present (single-column doc), mirror it to the other.
+            let effectiveTxTone = parsed.txToneHz > 0 ? parsed.txToneHz : parsed.rxToneHz
+            let effectiveRxTone = parsed.rxToneHz > 0 ? parsed.rxToneHz : parsed.txToneHz
+            let txSubAudio: SubAudio? = effectiveTxTone > 0 ? .frequency(effectiveTxTone) : nil
+            let rxSubAudio: SubAudio? = effectiveRxTone > 0 ? .frequency(effectiveRxTone) : nil
+            print("[AIImport][\(index)] final → rx=\(rxFreq) tx=\(txFreq) offset=\(parsed.txOffsetMHz) txTone=\(effectiveTxTone) rxTone=\(effectiveRxTone)")
 
             return Channel(
                 channelID: index,
