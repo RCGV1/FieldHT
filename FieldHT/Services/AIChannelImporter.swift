@@ -17,6 +17,10 @@ import PDFKit
 
 @Generable(description: "A single ham radio channel — name and frequencies only")
 struct ParsedChannelFreq {
+    // Scratchpad first — model reasons through column mapping before committing to values.
+    @Guide(description: "Briefly identify: what column holds the RX frequency, what column holds the TX frequency or offset (if any), and what the TX frequency for this channel is. E.g. 'RX col=Frequency, TX col=none, band=VHF so TX=RX+0.600=148.575'")
+    var reasoning: String
+
     @Guide(description: "Channel name, 10 characters max")
     var name: String
 
@@ -133,6 +137,7 @@ enum AIChannelImporter {
 
         print("[AIImport] Pass 1 — \(parsedFreqs.count) channel(s)")
         for (i, p) in parsedFreqs.enumerated() {
+            print("[AIImport][P1][\(i)] reasoning: \(p.reasoning)")
             print("[AIImport][P1][\(i)] name=\(p.name) rx=\(p.rxFreqMHz) tx=\(p.txFreqMHz) narrow=\(p.narrowBand) rxOnly=\(p.rxOnly)")
         }
 
