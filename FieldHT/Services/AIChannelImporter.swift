@@ -96,9 +96,11 @@ enum AIChannelImporter {
             Your ONLY job is to find RX and TX radio frequencies. Completely ignore tone, CTCSS, PL, and squelch columns.
 
             CRITICAL: txFreqMHz is a full amateur radio frequency in MHz.
-            It must always be within 30 MHz of rxFreqMHz — they are in the same frequency band.
-            Example: if rxFreqMHz=147.975, then txFreqMHz must be between 117 and 178 MHz.
-            A value like 107.2 or 94.8 is a CTCSS tone in Hz — NEVER write it into txFreqMHz.
+            It must always be within 26 MHz of rxFreqMHz (the maximum standard ham repeater offset is 25 MHz).
+            CTCSS/PL tones look like 67.0, 88.5, 94.8, 100.0, 107.2, 118.8, 127.3 — these are Hz values, NOT MHz frequencies. NEVER write them into txFreqMHz.
+
+            WRONG: rxFreqMHz=147.315, txFreqMHz=118.8  ← 118.8 is a CTCSS tone, not a TX frequency
+            RIGHT: rxFreqMHz=147.315, txFreqMHz=147.915  ← 147.315 + 0.600 band offset
 
             TX frequency rules (in order of priority):
             1. If the document lists an explicit TX frequency column: use that value.
@@ -194,7 +196,7 @@ enum AIChannelImporter {
             let txFreq: Double
             let modelTx = freq.txFreqMHz.rounded3
             let txRxDelta = abs(modelTx - rxFreq)
-            if (50.0...1300.0).contains(modelTx) && txRxDelta <= 30.0 {
+            if (50.0...1300.0).contains(modelTx) && txRxDelta <= 26.0 {
                 txFreq = modelTx
             } else {
                 let inferred = Self.inferTxFreq(fromRx: rxFreq)
