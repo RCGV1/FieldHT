@@ -187,11 +187,36 @@ enum AIChannelImporter {
             )
         }
 
-        guard !channels.isEmpty else {
+        // Deduplicate: ICS-205 and similar docs often list each repeater twice
+        // (e.g. "Repeater" and "Direct" rows). Keep the entry with a TX tone when
+        // both share the same RX frequency; otherwise keep the first seen.
+        var seen: [String: Channel] = [:]
+        var dedupedOrdered: [String] = []  // preserves insertion order
+        for ch in channels {
+            let key = String(format: "%.4f", ch.rxFreq)
+            if let existing = seen[key] {
+                if ch.txSubAudio != nil && existing.txSubAudio == nil {
+                    seen[key] = ch  // upgrade to the entry that has a tone
+                }
+            } else {
+                seen[key] = ch
+                dedupedOrdered.append(key)
+            }
+        }
+        let deduped = dedupedOrdered.enumerated().compactMap { i, key -> Channel? in
+            guard var ch = seen[key] else { return nil }
+            ch.channelID = i
+            return ch
+        }
+
+        let dupeCount = channels.count - deduped.count
+        if dupeCount > 0 { print("[AIImport] Removed \(dupeCount) duplicate(s), \(deduped.count) channel(s) remain") }
+
+        guard !deduped.isEmpty else {
             throw AIImportError.noChannelsFound
         }
 
-        return channels
+        return deduped
     }
 
     // MARK: - Frequency Helpers
