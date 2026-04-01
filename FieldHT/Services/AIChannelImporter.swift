@@ -20,8 +20,8 @@ struct ParsedChannel {
     @Guide(description: "Receive (output/downlink) frequency in MHz, e.g. 146.520", .range(50.0...1300.0))
     var rxFreqMHz: Double
 
-    @Guide(description: "Transmit (input/uplink) frequency in MHz. For simplex equals rxFreqMHz. For repeaters apply the band offset.", .range(50.0...1300.0))
-    var txFreqMHz: Double
+    @Guide(description: "TX offset from RX in MHz. Use 0.0 for simplex. Typical values: +0.600 (VHF 2m), +1.600 (1.25m), +5.000 (UHF 70cm), +12.000 (23cm), +25.000 (33cm). Negative if TX is below RX.", .range(-30.0...30.0))
+    var txOffsetMHz: Double
 
     // Booleans next — simple, unambiguous.
     @Guide(description: "True for narrow band 12.5 kHz NFM, false for wide band 25 kHz FM")
@@ -97,14 +97,17 @@ enum AIChannelImporter {
             - If a tone is listed, write it into txToneHz and/or rxToneHz.
             - If no tone is listed for that channel, use 0.0.
 
-            TX frequency rules:
-            - Simplex: txFreqMHz = rxFreqMHz exactly.
-            - Repeater with explicit TX freq or offset listed: apply it directly.
-            - Repeater with no TX info, infer from band:
-              VHF 144–148 MHz → txFreqMHz = rxFreqMHz + 0.600
-              UHF 440–450 MHz → txFreqMHz = rxFreqMHz + 5.000
-              1.2 GHz 1240–1300 MHz → txFreqMHz = rxFreqMHz + 12.000
-              All other bands → txFreqMHz = rxFreqMHz
+            TX OFFSET RULES (txOffsetMHz = txFreq − rxFreq):
+            - Simplex: 0.0
+            - Document lists explicit TX frequency: txOffsetMHz = txFreq − rxFreq
+            - Document lists an offset (e.g. "+0.6", "–5.0"): use it directly
+            - No TX info given, infer from band:
+              VHF 144–148 MHz → +0.600
+              1.25 m 222–225 MHz → +1.600
+              UHF 440–450 MHz → +5.000
+              33 cm 902–928 MHz → +25.000
+              23 cm 1240–1300 MHz → +12.000
+              All other bands → 0.0
             """
         )
 
@@ -124,7 +127,7 @@ enum AIChannelImporter {
 
         print("[AIImport] Model returned \(response.content.channels.count) raw channel(s)")
         for (i, p) in response.content.channels.enumerated() {
-            print("[AIImport][\(i)] name=\(p.name) rx=\(p.rxFreqMHz) tx=\(p.txFreqMHz) txTone=\(p.txToneHz) rxTone=\(p.rxToneHz) narrow=\(p.narrowBand) rxOnly=\(p.rxOnly)")
+            print("[AIImport][\(i)] name=\(p.name) rx=\(p.rxFreqMHz) offset=\(p.txOffsetMHz) txTone=\(p.txToneHz) rxTone=\(p.rxToneHz) narrow=\(p.narrowBand) rxOnly=\(p.rxOnly)")
         }
 
         let channels: [Channel] = response.content.channels.enumerated().compactMap { index, parsed in
@@ -134,14 +137,15 @@ enum AIChannelImporter {
                 return nil
             }
 
-            // Hard fallback: if model returned an invalid TX freq (0 or out of band),
-            // infer it from the standard band offset rather than leaving it broken.
+            // txOffsetMHz is constrained to -30...+30 by token-masking, so no CTCSS bleed.
+            // Compute absolute TX and validate; fall back to band-inferred offset if result is out of band.
+            let computedTx = rxFreq + parsed.txOffsetMHz
             let txFreq: Double
-            if (50.0...1300.0).contains(parsed.txFreqMHz) {
-                txFreq = parsed.txFreqMHz
+            if (50.0...1300.0).contains(computedTx) {
+                txFreq = computedTx
             } else {
                 let inferred = Self.inferTxFreq(fromRx: rxFreq)
-                print("[AIImport][\(index)] txFreq \(parsed.txFreqMHz) invalid — inferred \(inferred) from rx \(rxFreq)")
+                print("[AIImport][\(index)] computed tx \(computedTx) out of range — inferred \(inferred)")
                 txFreq = inferred
             }
 
@@ -149,7 +153,7 @@ enum AIChannelImporter {
             // so invalid values cannot be generated. Still treat 0.0 as "no tone".
             let txSubAudio: SubAudio? = parsed.txToneHz > 0 ? .frequency(parsed.txToneHz) : nil
             let rxSubAudio: SubAudio? = parsed.rxToneHz > 0 ? .frequency(parsed.rxToneHz) : nil
-            print("[AIImport][\(index)] final → rx=\(rxFreq) tx=\(txFreq) txTone=\(parsed.txToneHz) rxTone=\(parsed.rxToneHz)")
+            print("[AIImport][\(index)] final → rx=\(rxFreq) tx=\(txFreq) offset=\(parsed.txOffsetMHz) txTone=\(parsed.txToneHz) rxTone=\(parsed.rxToneHz)")
 
             return Channel(
                 channelID: index,
