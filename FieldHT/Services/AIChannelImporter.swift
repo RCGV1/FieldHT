@@ -92,20 +92,24 @@ enum AIChannelImporter {
 
         let freqSession = LanguageModelSession(
             instructions: """
-            You are a ham radio channel list parser focused on frequencies.
-            Extract channel names and frequencies only — ignore any tone or squelch columns.
+            You are a ham radio channel frequency extractor.
+            Your ONLY job is to find RX and TX radio frequencies. Completely ignore tone, CTCSS, PL, and squelch columns.
 
-            Frequencies are always in MHz (e.g. 146.520, 447.000).
+            CRITICAL: txFreqMHz is a full amateur radio frequency in MHz.
+            It must always be within 30 MHz of rxFreqMHz — they are in the same frequency band.
+            Example: if rxFreqMHz=147.975, then txFreqMHz must be between 117 and 178 MHz.
+            A value like 107.2 or 94.8 is a CTCSS tone in Hz — NEVER write it into txFreqMHz.
 
-            TX frequency rules:
-            - If the document lists an explicit TX frequency or offset, use it exactly.
-            - For simplex channels (no repeater): txFreqMHz = rxFreqMHz.
-            - For repeaters with no explicit TX info, infer from the standard band offset:
-              VHF 144–148 MHz → txFreqMHz = rxFreqMHz + 0.600
-              1.25 m 222–225 MHz → txFreqMHz = rxFreqMHz + 1.600
-              UHF 440–450 MHz → txFreqMHz = rxFreqMHz + 5.000
-              33 cm 902–928 MHz → txFreqMHz = rxFreqMHz + 25.000
-              23 cm 1240–1300 MHz → txFreqMHz = rxFreqMHz + 12.000
+            TX frequency rules (in order of priority):
+            1. If the document lists an explicit TX frequency column: use that value.
+            2. If the document lists an offset (e.g. "+0.6", "–5.0"): txFreqMHz = rxFreqMHz + offset.
+            3. If no TX info in the document, infer from band:
+               VHF 144–148 MHz → txFreqMHz = rxFreqMHz + 0.600
+               1.25 m 222–225 MHz → txFreqMHz = rxFreqMHz + 1.600
+               UHF 440–450 MHz → txFreqMHz = rxFreqMHz + 5.000
+               33 cm 902–928 MHz → txFreqMHz = rxFreqMHz + 25.000
+               23 cm 1240–1300 MHz → txFreqMHz = rxFreqMHz + 12.000
+               Simplex / other bands → txFreqMHz = rxFreqMHz
             """
         )
 
@@ -177,14 +181,16 @@ enum AIChannelImporter {
                 continue
             }
 
-            // Use model's TX directly; fall back to band inference only if invalid.
+            // Use model's TX if it's a plausible radio frequency (within 30 MHz of RX).
+            // If it looks like a CTCSS tone got written into the TX field, fall back to band inference.
             let txFreq: Double
             let modelTx = freq.txFreqMHz.rounded3
-            if (50.0...1300.0).contains(modelTx) {
+            let txRxDelta = abs(modelTx - rxFreq)
+            if (50.0...1300.0).contains(modelTx) && txRxDelta <= 30.0 {
                 txFreq = modelTx
             } else {
                 let inferred = Self.inferTxFreq(fromRx: rxFreq)
-                print("[AIImport][\(index)] tx \(modelTx) invalid — inferred \(inferred)")
+                print("[AIImport][\(index)] tx \(modelTx) rejected (delta=\(txRxDelta)) — inferred \(inferred)")
                 txFreq = inferred
             }
 
