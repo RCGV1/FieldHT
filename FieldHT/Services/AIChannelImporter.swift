@@ -142,7 +142,7 @@ enum AIChannelImporter {
             // get the correct uplink frequency instead of a simplex copy of RX.
             let txFreq: Double
             if parsed.txOffsetMHz != 0.0 {
-                let computed = rxFreq + parsed.txOffsetMHz
+                let computed = (rxFreq + parsed.txOffsetMHz).rounded3
                 if (50.0...1300.0).contains(computed) {
                     txFreq = computed
                 } else {
@@ -222,19 +222,35 @@ enum AIChannelImporter {
     // MARK: - Frequency Helpers
 
     /// Infers the standard TX (uplink) frequency from a repeater's RX (output) frequency.
-    /// Returns rxFreq unchanged for simplex bands or unrecognised frequencies.
+    /// Returns rxFreq unchanged for known simplex frequencies or unrecognised bands.
     private static func inferTxFreq(fromRx rx: Double) -> Double {
+        // Well-known simplex channels — always TX = RX regardless of band.
+        let knownSimplex: [Double] = [
+            144.390,            // North American APRS
+            146.520,            // 2 m national calling
+            146.460, 146.580,   // common 2 m simplex
+            223.500,            // 1.25 m calling
+            446.000,            // 70 cm calling
+            446.100,            // 70 cm simplex
+            52.525,             // 6 m calling
+        ]
+        let rounded = rx.rounded3
+        if knownSimplex.contains(where: { abs($0 - rounded) < 0.001 }) { return rounded }
+
         switch rx {
-        case 144.0..<148.0: return rx + 0.600   // 2 m repeater input
-        case 222.0..<225.0: return rx + 1.600   // 1.25 m repeater input
-        case 440.0..<450.0: return rx + 5.000   // 70 cm repeater input
-        case 902.0..<928.0: return rx + 25.000  // 33 cm repeater input
-        case 1240.0..<1300.0: return rx + 12.000 // 23 cm repeater input
-        default:            return rx            // simplex / unknown → use RX
+        case 144.0..<148.0:   return (rx + 0.600).rounded3   // 2 m repeater input
+        case 222.0..<225.0:   return (rx + 1.600).rounded3   // 1.25 m repeater input
+        case 440.0..<450.0:   return (rx + 5.000).rounded3   // 70 cm repeater input
+        case 902.0..<928.0:   return (rx + 25.000).rounded3  // 33 cm repeater input
+        case 1240.0..<1300.0: return (rx + 12.000).rounded3  // 23 cm repeater input
+        default:              return rounded                   // simplex / unknown → use RX
         }
     }
 
+    // MARK: - Frequency Rounding
+
     // MARK: - Text Extraction
+
 
     private static func extractText(from url: URL) throws -> String {
         if url.pathExtension.lowercased() == "pdf" {
@@ -271,4 +287,9 @@ enum AIChannelImporter {
 
         return text
     }
+}
+
+// MARK: - Double rounding helper (3 decimal places = 1 kHz precision)
+private extension Double {
+    var rounded3: Double { (self * 1000).rounded() / 1000 }
 }
