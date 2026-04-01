@@ -17,10 +17,10 @@ struct ParsedChannel {
     @Guide(description: "Channel name, 10 characters max")
     var name: String
 
-    @Guide(description: "Receive (output/downlink) frequency in MHz, e.g. 146.520")
+    @Guide(description: "Receive (output/downlink) frequency in MHz, e.g. 146.520", .range(50.0...1300.0))
     var rxFreqMHz: Double
 
-    @Guide(description: "Transmit (input/uplink) frequency in MHz. For simplex equals rxFreqMHz. For repeaters apply the band offset.")
+    @Guide(description: "Transmit (input/uplink) frequency in MHz. For simplex equals rxFreqMHz. For repeaters apply the band offset.", .range(50.0...1300.0))
     var txFreqMHz: Double
 
     // Booleans next — simple, unambiguous.
