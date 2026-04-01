@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import FoundationModels
 
 struct ChannelListView: View {
     @StateObject private var viewModel = ChannelViewModel()
@@ -22,6 +23,11 @@ struct ChannelListView: View {
     @State private var isImporting = false
     @State private var importError: String?
     @State private var insertTarget: Channel? = nil   // pending insert-before confirmation
+    @State private var showAIImportPicker = false
+    @State private var aiParsedChannels: [Channel] = []
+    @State private var showAIPreview = false
+    @State private var aiStatusMessage = "Analyzing\u{2026}"
+    @State private var isAIImporting = false
 
     private let maxRetries = 3
 
@@ -43,17 +49,24 @@ struct ChannelListView: View {
                                 Text("\(index+1).  \(viewModel.regions[index])").tag(index)
                             }
                         }
-                        .disabled(isHydrating || isImporting)
+                        .disabled(isHydrating || isImporting || isAIImporting)
 
                         Button(action: { showRegions = true }) {
                             Label("Manage Group Names", systemImage: "pencil")
                         }
-                        .disabled(isHydrating || isImporting)
+                        .disabled(isHydrating || isImporting || isAIImporting)
                         
                         Button(action: { showImportPicker = true }) {
                             Label("Import from CSV", systemImage: "square.and.arrow.down")
                         }
-                        .disabled(isHydrating || isImporting)
+                        .disabled(isHydrating || isImporting || isAIImporting)
+
+                        if SystemLanguageModel.default.isAvailable {
+                            Button(action: { showAIImportPicker = true }) {
+                                Label("Import with Apple Intelligence", systemImage: "sparkles")
+                            }
+                            .disabled(isHydrating || isImporting || isAIImporting)
+                        }
                     }
                 }
 
@@ -89,7 +102,7 @@ struct ChannelListView: View {
                                 }
                             }
                         }
-                        .disabled(isHydrating || isImporting || viewModel.isSaving)
+                        .disabled(isHydrating || isImporting || isAIImporting || viewModel.isSaving)
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
                                 viewModel.deleteChannel(channel)
@@ -135,7 +148,7 @@ struct ChannelListView: View {
                                         }
                                     }
                                 }
-                                .disabled(isHydrating || isImporting || viewModel.isSaving)
+                                .disabled(isHydrating || isImporting || isAIImporting || viewModel.isSaving)
                             }
                         }
                     }
@@ -153,10 +166,10 @@ struct ChannelListView: View {
                     }
                 }
             }
-            .blur(radius: isHydrating || isImporting || viewModel.isSaving ? 3 : 0)
+            .blur(radius: isHydrating || isImporting || isAIImporting || viewModel.isSaving ? 3 : 0)
 
             // Hydration/Import/Saving loading overlay
-            if isHydrating || isImporting || viewModel.isSaving {
+            if isHydrating || isImporting || isAIImporting || viewModel.isSaving {
                 ZStack {
                     Color.black.opacity(0.3)
                         .ignoresSafeArea()
@@ -166,7 +179,9 @@ struct ChannelListView: View {
                             .scaleEffect(1.5)
                             .progressViewStyle(CircularProgressViewStyle(tint: .white))
 
-                        Text(isImporting
+                        Text(isAIImporting
+                            ? aiStatusMessage
+                            : isImporting
                             ? "Importing channels..."
                             : viewModel.isSaving
                             ? "Saving to radio..."
@@ -239,6 +254,18 @@ struct ChannelListView: View {
         ) { result in
             Task {
                 await handleImport(result: result)
+            }
+        }
+        .fileImporter(
+            isPresented: $showAIImportPicker,
+            allowedContentTypes: [.data, .pdf, .commaSeparatedText, .text, .plainText],
+            allowsMultipleSelection: false
+        ) { result in
+            Task { await handleAIImport(result: result) }
+        }
+        .sheet(isPresented: $showAIPreview) {
+            AIImportPreviewSheet(channels: aiParsedChannels) { channels in
+                Task { await commitChannels(channels) }
             }
         }
     }
@@ -343,13 +370,13 @@ struct ChannelListView: View {
     }
     
     // MARK: - CSV Import
-    
+
     private func handleImport(result: Result<[URL], Error>) async {
         await MainActor.run {
             isImporting = true
             importError = nil
         }
-        
+
         do {
             guard let fileURL = try result.get().first else {
                 await MainActor.run {
@@ -358,7 +385,7 @@ struct ChannelListView: View {
                 }
                 return
             }
-            
+
             guard fileURL.startAccessingSecurityScopedResource() else {
                 await MainActor.run {
                     isImporting = false
@@ -367,90 +394,131 @@ struct ChannelListView: View {
                 return
             }
             defer { fileURL.stopAccessingSecurityScopedResource() }
-            
+
             let csvString = try String(contentsOf: fileURL, encoding: .utf8)
             let channels = try parseCSV(csvString)
-            
+
             // Limit to 30 channels
             let channelsToImport = Array(channels.prefix(30))
-            
-            print("ChannelListView: Importing \(channelsToImport.count) channels to region \(viewModel.activeRegionIndex)")
-            
-            // Import channels to the current region
-            if radioManager.isConnected, let controller = radioManager.radioController {
-                // Try to write to radio
-                await MainActor.run {
-                    viewModel.isSaving = true
-                }
-                
-                do {
-                    // Get current region's channels
-                    let existingChannels = controller.channels(forRegion: viewModel.activeRegionIndex)
-                    
-                    // Update existing slots first
-                    var importedCount = 0
-                    for (idx, csvChannel) in channelsToImport.enumerated() {
-                        if idx < existingChannels.count {
-                            var updatedChannel = csvChannel
-                            updatedChannel.channelID = existingChannels[idx].channelID
-                            try await controller.setChannel(updatedChannel)
-                            importedCount += 1
-                        } else {
-                            break
-                        }
-                    }
-                    
-                    // If we have more CSV channels, try to fill empty slots
-                    if importedCount < channelsToImport.count {
-                        let emptySlots = existingChannels.filter { $0.rxFreq == 0 && $0.txFreq == 0 }
-                        var slotIndex = 0
-                        
-                        for idx in importedCount..<channelsToImport.count {
-                            if slotIndex < emptySlots.count {
-                                var updatedChannel = channelsToImport[idx]
-                                updatedChannel.channelID = emptySlots[slotIndex].channelID
-                                try await controller.setChannel(updatedChannel)
-                                slotIndex += 1
-                            } else {
-                                break
-                            }
-                        }
-                    }
-                    
-                    // Refresh
-                    try await controller.hydrateChannels()
-                    
-                    await MainActor.run {
-                        viewModel.isSaving = false
-                        viewModel.loadChannels()
-                        isImporting = false
-                        importError = channels.count > 30 ? "Imported first 30 of \(channels.count) channels" : nil
-                    }
-                } catch {
-                    await MainActor.run {
-                        viewModel.isSaving = false
-                        importError = "Radio write failed, storing locally: \(error.localizedDescription)"
-                    }
-                    // Fall back to local storage
-                    viewModel.addChannelsLocally(channelsToImport)
-                    await MainActor.run {
-                        isImporting = false
-                    }
-                }
-            } else {
-                // Store locally when not connected
-                viewModel.addChannelsLocally(channelsToImport)
-                await MainActor.run {
-                    isImporting = false
-                    importError = channels.count > 30 ? "Saved \(channelsToImport.count) channels locally (not connected to radio)" : nil
-                }
-            }
-            
+
+            await commitChannels(channelsToImport, overflowCount: channels.count > 30 ? channels.count : nil)
+
         } catch {
             print("ChannelListView: Import error: \(error)")
             await MainActor.run {
                 isImporting = false
                 importError = "Import failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    // MARK: - AI Import
+
+    private func handleAIImport(result: Result<[URL], Error>) async {
+        await MainActor.run {
+            isAIImporting = true
+            aiStatusMessage = "Reading file\u{2026}"
+            importError = nil
+        }
+        do {
+            guard let fileURL = try result.get().first else {
+                await MainActor.run { isAIImporting = false; importError = "No file selected" }
+                return
+            }
+            guard fileURL.startAccessingSecurityScopedResource() else {
+                await MainActor.run { isAIImporting = false; importError = "Unable to access file" }
+                return
+            }
+            defer { fileURL.stopAccessingSecurityScopedResource() }
+            let channels = try await AIChannelImporter.parse(url: fileURL) { msg in
+                Task { @MainActor in aiStatusMessage = msg }
+            }
+            await MainActor.run {
+                aiParsedChannels = channels
+                isAIImporting = false
+                showAIPreview = true
+            }
+        } catch {
+            await MainActor.run {
+                isAIImporting = false
+                importError = "AI import failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    // MARK: - Commit Channels to Radio
+
+    private func commitChannels(_ channelsToImport: [Channel], overflowCount: Int? = nil) async {
+        await MainActor.run {
+            isImporting = true
+            importError = nil
+        }
+
+        print("ChannelListView: Importing \(channelsToImport.count) channels to region \(viewModel.activeRegionIndex)")
+
+        if radioManager.isConnected, let controller = radioManager.radioController {
+            await MainActor.run {
+                viewModel.isSaving = true
+            }
+
+            do {
+                let existingChannels = controller.channels(forRegion: viewModel.activeRegionIndex)
+
+                var importedCount = 0
+                for (idx, csvChannel) in channelsToImport.enumerated() {
+                    if idx < existingChannels.count {
+                        var updatedChannel = csvChannel
+                        updatedChannel.channelID = existingChannels[idx].channelID
+                        try await controller.setChannel(updatedChannel)
+                        importedCount += 1
+                    } else {
+                        break
+                    }
+                }
+
+                if importedCount < channelsToImport.count {
+                    let emptySlots = existingChannels.filter { $0.rxFreq == 0 && $0.txFreq == 0 }
+                    var slotIndex = 0
+
+                    for idx in importedCount..<channelsToImport.count {
+                        if slotIndex < emptySlots.count {
+                            var updatedChannel = channelsToImport[idx]
+                            updatedChannel.channelID = emptySlots[slotIndex].channelID
+                            try await controller.setChannel(updatedChannel)
+                            slotIndex += 1
+                        } else {
+                            break
+                        }
+                    }
+                }
+
+                try await controller.hydrateChannels()
+
+                await MainActor.run {
+                    viewModel.isSaving = false
+                    viewModel.loadChannels()
+                    isImporting = false
+                    if let total = overflowCount {
+                        importError = "Imported first 30 of \(total) channels"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    viewModel.isSaving = false
+                    importError = "Radio write failed, storing locally: \(error.localizedDescription)"
+                }
+                viewModel.addChannelsLocally(channelsToImport)
+                await MainActor.run {
+                    isImporting = false
+                }
+            }
+        } else {
+            viewModel.addChannelsLocally(channelsToImport)
+            await MainActor.run {
+                isImporting = false
+                if let total = overflowCount {
+                    importError = "Saved \(channelsToImport.count) of \(total) channels locally (not connected to radio)"
+                }
             }
         }
     }
