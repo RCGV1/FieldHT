@@ -11,38 +11,47 @@ import SwiftData
 struct MainTabView: View {
     @EnvironmentObject private var radioManager: RadioManager
 
-      var body: some View {
-          NavigationStack {
-              TabView {
+    var body: some View {
+        TabView {
+            tabContainer {
+                RadioControlView()
+            }
+            .tabItem {
+                Label("Radio", systemImage: "radio")
+            }
 
-                  RadioControlView()
-                  .tabItem {
-                      Label("Radio", systemImage: "radio")
-                  }
+            tabContainer {
+                ConnectView()
+            }
+            .tabItem {
+                Label("Connect", systemImage: "antenna.radiowaves.left.and.right")
+            }
 
-                  ConnectView()
-                      .tabItem {
-                          Label("Connect", systemImage: "antenna.radiowaves.left.and.right")
-                      }
+            tabContainer {
+                SettingsView()
+            }
+            .tabItem {
+                Label("Settings", systemImage: "gearshape.fill")
+            }
+        }
+    }
 
-                  SettingsView()
-                      .tabItem {
-                          Label("Settings", systemImage: "gearshape.fill")
-                      }
-              }
-              .toolbar {
-                  ToolbarItem(placement: .topBarTrailing) {
-                      if radioManager.isConnected {
-                          GlobalStatusToolbar()
-                              .environmentObject(radioManager)
-                      }
-                  }
-              }
-          }
-      }
-  }
+    private func tabContainer<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        NavigationStack {
+            content()
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        if radioManager.isConnected {
+                            GlobalStatusToolbar()
+                                .environmentObject(radioManager)
+                        }
+                    }
+                }
+        }
+    }
+}
 
-  #Preview {
-      MainTabView()
-          .environmentObject(RadioManager())
-  }
+#Preview {
+    MainTabView()
+        .environmentObject(RadioManager())
+}

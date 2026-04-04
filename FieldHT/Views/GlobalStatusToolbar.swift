@@ -32,7 +32,6 @@ struct GlobalStatusToolbar: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            // TX/RX Status
             HStack(spacing: 4) {
                 Circle()
                     .fill(statusColor)
@@ -46,11 +45,10 @@ struct GlobalStatusToolbar: View {
             Divider()
                 .frame(height: 12)
             
-            // Battery
             HStack(spacing: 4) {
                 Image(systemName: batteryIcon)
                     .foregroundColor(batteryColor)
-                    .font(.caption)
+                .font(.caption)
                 Text("\(radioManager.batteryLevel)%")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -61,6 +59,7 @@ struct GlobalStatusToolbar: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
+        .background(.thinMaterial, in: Capsule())
     }
     
     private var batteryIcon: String {

@@ -18,8 +18,8 @@ struct AIImportPreviewSheet: View {
             List {
                 Section {
                     Label(
-                        "Apple Intelligence found \(channels.count) channel\(channels.count == 1 ? "" : "s")",
-                        systemImage: "sparkles"
+                        "Found \(channels.count) channel\(channels.count == 1 ? "" : "s") in this file",
+                        systemImage: "doc.text.magnifyingglass"
                     )
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

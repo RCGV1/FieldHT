@@ -7,7 +7,6 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
-import FoundationModels
 
 struct ChannelListView: View {
     @StateObject private var viewModel = ChannelViewModel()
@@ -23,13 +22,29 @@ struct ChannelListView: View {
     @State private var isImporting = false
     @State private var importError: String?
     @State private var insertTarget: Channel? = nil   // pending insert-before confirmation
-    @State private var showAIImportPicker = false
-    @State private var aiParsedChannels: [Channel] = []
-    @State private var showAIPreview = false
-    @State private var aiStatusMessage = "Analyzing\u{2026}"
-    @State private var isAIImporting = false
+    @State private var showDocumentImportPicker = false
+    @State private var importedDocumentChannels: [Channel] = []
+    @State private var showDocumentImportPreview = false
+    @State private var importStatusMessage = "Analyzing\u{2026}"
+    @State private var isDocumentImporting = false
 
     private let maxRetries = 3
+    
+    private var overlayMessage: String {
+        if isDocumentImporting {
+            return importStatusMessage
+        }
+        if isImporting {
+            return "Importing channels..."
+        }
+        if viewModel.isSaving {
+            return "Saving to radio..."
+        }
+        if retryCount > 0 {
+            return "Syncing with radio... (Attempt \(retryCount + 1)/\(maxRetries))"
+        }
+        return "Syncing with radio..."
+    }
 
     var body: some View {
         ZStack {
@@ -49,23 +64,33 @@ struct ChannelListView: View {
                                 Text("\(index+1).  \(viewModel.regions[index])").tag(index)
                             }
                         }
-                        .disabled(isHydrating || isImporting || isAIImporting)
+                        .disabled(isHydrating || isImporting || isDocumentImporting)
 
                         Button(action: { showRegions = true }) {
                             Label("Manage Group Names", systemImage: "pencil")
                         }
-                        .disabled(isHydrating || isImporting || isAIImporting)
+                        .disabled(isHydrating || isImporting || isDocumentImporting)
                         
                         Button(action: { showImportPicker = true }) {
                             Label("Import from CSV", systemImage: "square.and.arrow.down")
                         }
-                        .disabled(isHydrating || isImporting || isAIImporting)
+                        .disabled(isHydrating || isImporting || isDocumentImporting)
 
-                        if SystemLanguageModel.default.isAvailable {
-                            Button(action: { showAIImportPicker = true }) {
-                                Label("Import with Apple Intelligence", systemImage: "sparkles")
+                        Button(action: { showDocumentImportPicker = true }) {
+                            Label("Import from Document", systemImage: "doc.text.magnifyingglass")
+                        }
+                        .disabled(isHydrating || isImporting || isDocumentImporting)
+
+                        if let error = importError {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                                    .padding(.top, 2)
+
+                                Text(error)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
-                            .disabled(isHydrating || isImporting || isAIImporting)
                         }
                     }
                 }
@@ -73,36 +98,17 @@ struct ChannelListView: View {
                 if viewModel.isLoading {
                     ProgressView("Loading channels...")
                 } else if viewModel.channels.isEmpty {
-                    Text("No channels found")
-                        .foregroundColor(.secondary)
+                    ContentUnavailableView(
+                        "No Channels Yet",
+                        systemImage: "waveform.badge.magnifyingglass",
+                        description: Text("Import channel data from CSV, PDF, or text files, or connect to hydrate channels from the radio.")
+                    )
                 } else {
                     ForEach(viewModel.regularChannels, id: \.channelID) { channel in
                         NavigationLink(destination: ChannelDetailView(channel: channel, viewModel: viewModel)) {
-                            HStack {
-                                Text(String(format: "%03d", channel.channelID + 1))
-                                    .font(.caption)
-                                    .monospacedDigit()
-                                    .padding(4)
-                                    .background(Color.gray.opacity(0.2))
-                                    .cornerRadius(4)
-
-                                VStack(alignment: .leading) {
-                                    Text(channel.name.isEmpty ? "Channel \(channel.channelID + 1)" : channel.name)
-                                        .font(.headline)
-                                    Text(String(format: "%.5f MHz", channel.rxFreq))
-                                        .font(.subheadline)
-                                        .foregroundColor(.secondary)
-                                }
-
-                                Spacer()
-
-                                if channel.txDisable {
-                                    Image(systemName: "antenna.radiowaves.left.and.right.slash")
-                                        .font(.caption)
-                                }
-                            }
+                            ChannelRowView(channel: channel)
                         }
-                        .disabled(isHydrating || isImporting || isAIImporting || viewModel.isSaving)
+                        .disabled(isHydrating || isImporting || isDocumentImporting || viewModel.isSaving)
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
                                 viewModel.deleteChannel(channel)
@@ -118,7 +124,7 @@ struct ChannelListView: View {
                                     viewModel.insertEmptyChannel(before: channel.channelID)
                                 }
                             } label: {
-                                Label("Insert Before", systemImage: "plus.rectangle.portrait.on.rectangle.portrait")
+                                Label("Insert Before", systemImage: "plus.rectangle.on.rectangle")
                             }
                             .tint(.blue)
                         }
@@ -131,45 +137,18 @@ struct ChannelListView: View {
                         Section(header: Text("VFO")) {
                             ForEach(viewModel.vfoChannels, id: \.channelID) { channel in
                                 NavigationLink(destination: ChannelDetailView(channel: channel, viewModel: viewModel)) {
-                                    HStack {
-                                        Text("VFO")
-                                            .font(.caption)
-                                            .monospacedDigit()
-                                            .padding(4)
-                                            .background(Color.blue.opacity(0.15))
-                                            .cornerRadius(4)
-
-                                        VStack(alignment: .leading) {
-                                            Text(channel.name.isEmpty ? (channel.channelID == 252 ? "VFO A" : "VFO B") : channel.name)
-                                                .font(.headline)
-                                            Text(String(format: "%.5f MHz", channel.rxFreq))
-                                                .font(.subheadline)
-                                                .foregroundColor(.secondary)
-                                        }
-                                    }
+                                    ChannelRowView(channel: channel, isVFO: true)
                                 }
-                                .disabled(isHydrating || isImporting || isAIImporting || viewModel.isSaving)
+                                .disabled(isHydrating || isImporting || isDocumentImporting || viewModel.isSaving)
                             }
                         }
                     }
                 }
-                
-                if let error = importError {
-                    Section {
-                        HStack {
-                            Image(systemName: "exclamationmark.triangle")
-                                .foregroundColor(.orange)
-                            Text(error)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
             }
-            .blur(radius: isHydrating || isImporting || isAIImporting || viewModel.isSaving ? 3 : 0)
+            .blur(radius: isHydrating || isImporting || isDocumentImporting || viewModel.isSaving ? 3 : 0)
 
             // Hydration/Import/Saving loading overlay
-            if isHydrating || isImporting || isAIImporting || viewModel.isSaving {
+            if isHydrating || isImporting || isDocumentImporting || viewModel.isSaving {
                 ZStack {
                     Color.black.opacity(0.3)
                         .ignoresSafeArea()
@@ -179,15 +158,7 @@ struct ChannelListView: View {
                             .scaleEffect(1.5)
                             .progressViewStyle(CircularProgressViewStyle(tint: .white))
 
-                        Text(isAIImporting
-                            ? aiStatusMessage
-                            : isImporting
-                            ? "Importing channels..."
-                            : viewModel.isSaving
-                            ? "Saving to radio..."
-                            : retryCount > 0
-                            ? "Syncing with radio... (Attempt \(retryCount + 1)/\(maxRetries))"
-                            : "Syncing with radio...")
+                        Text(overlayMessage)
                             .font(.headline)
                             .foregroundColor(.white)
                     }
@@ -257,14 +228,14 @@ struct ChannelListView: View {
             }
         }
         .fileImporter(
-            isPresented: $showAIImportPicker,
+            isPresented: $showDocumentImportPicker,
             allowedContentTypes: [.data, .pdf, .commaSeparatedText, .text, .plainText],
             allowsMultipleSelection: false
         ) { result in
-            Task { await handleAIImport(result: result) }
+            Task { await handleDocumentImport(result: result) }
         }
-        .sheet(isPresented: $showAIPreview) {
-            AIImportPreviewSheet(channels: aiParsedChannels) { channels in
+        .sheet(isPresented: $showDocumentImportPreview) {
+            AIImportPreviewSheet(channels: importedDocumentChannels) { channels in
                 Task { await commitChannels(channels) }
             }
         }
@@ -412,36 +383,36 @@ struct ChannelListView: View {
         }
     }
 
-    // MARK: - AI Import
+    // MARK: - Document Import
 
-    private func handleAIImport(result: Result<[URL], Error>) async {
+    private func handleDocumentImport(result: Result<[URL], Error>) async {
         await MainActor.run {
-            isAIImporting = true
-            aiStatusMessage = "Reading file\u{2026}"
+            isDocumentImporting = true
+            importStatusMessage = "Reading file\u{2026}"
             importError = nil
         }
         do {
             guard let fileURL = try result.get().first else {
-                await MainActor.run { isAIImporting = false; importError = "No file selected" }
+                await MainActor.run { isDocumentImporting = false; importError = "No file selected" }
                 return
             }
             guard fileURL.startAccessingSecurityScopedResource() else {
-                await MainActor.run { isAIImporting = false; importError = "Unable to access file" }
+                await MainActor.run { isDocumentImporting = false; importError = "Unable to access file" }
                 return
             }
             defer { fileURL.stopAccessingSecurityScopedResource() }
             let channels = try await AIChannelImporter.parse(url: fileURL) { msg in
-                Task { @MainActor in aiStatusMessage = msg }
+                Task { @MainActor in importStatusMessage = msg }
             }
             await MainActor.run {
-                aiParsedChannels = channels
-                isAIImporting = false
-                showAIPreview = true
+                importedDocumentChannels = channels
+                isDocumentImporting = false
+                showDocumentImportPreview = true
             }
         } catch {
             await MainActor.run {
-                isAIImporting = false
-                importError = "AI import failed: \(error.localizedDescription)"
+                isDocumentImporting = false
+                importError = "Document import failed: \(error.localizedDescription)"
             }
         }
     }
@@ -629,6 +600,58 @@ struct ChannelListView: View {
             return nil
         }
         return .frequency(freq)
+    }
+}
+
+private struct ChannelRowView: View {
+    let channel: Channel
+    var isVFO: Bool = false
+
+    private var title: String {
+        if !channel.name.isEmpty {
+            return channel.name
+        }
+        if isVFO {
+            return channel.channelID == 252 ? "VFO A" : "VFO B"
+        }
+        return "Channel \(channel.channelID + 1)"
+    }
+
+    private var frequencyText: String {
+        String(format: "%.5f MHz", channel.rxFreq)
+    }
+
+    private var badgeText: String {
+        isVFO ? "VFO" : String(format: "%03d", channel.channelID + 1)
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(badgeText)
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(isVFO ? Color.blue.opacity(0.15) : Color.gray.opacity(0.16), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(frequencyText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if channel.txDisable {
+                Image(systemName: "antenna.radiowaves.left.and.right.slash")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
     }
 }
 

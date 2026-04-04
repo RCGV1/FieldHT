@@ -34,9 +34,9 @@ struct NotConnectedView: View {
         Feature(icon: "mic.fill", color: .purple,
                 title: "Siri Shortcuts",
                 detail: "Switch zones and channels hands-free"),
-        Feature(icon: "sparkles", color: .cyan,
-                title: "AI Channel Import",
-                detail: "Parse any file with Apple Intelligence"),
+        Feature(icon: "doc.text.magnifyingglass", color: .cyan,
+                title: "Channel File Import",
+                detail: "Import channel data from PDFs, text, and CSV files"),
     ]
 
     var body: some View {

@@ -242,27 +242,12 @@ struct RadioControlView: View {
 
     private var mainContent: some View {
         VStack(spacing: 20) {
-            connectionBanner
-
-            // MARK: - Memory Group
             memoryGroupSection
-
-            // MARK: - Dual Monitor Toggle (Left-Aligned)
             dualMonitorToggle
-
-            // MARK: - VFO Section
             vfoSection
-
-            // MARK: - Quick Toggles
             quickTogglesSection
-
-            // MARK: - Channel Navigation
             channelNavigationSection
-
-            // MARK: - Squelch
             squelchSection
-
-            // MARK: - RSSI Gauge
             rssiGaugeSection
 
             NavigationLink {
@@ -283,8 +268,7 @@ struct RadioControlView: View {
                 }
                 .padding()
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(uiColor: .secondarySystemBackground))
-                .cornerRadius(12)
+                .background(cardBackground)
             }
             Spacer()
         }
@@ -355,12 +339,10 @@ struct RadioControlView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .foregroundColor(radioManager.isDualWatchOn ? .green : .primary)
+                .background(cardBackground)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(
-                            radioManager.isDualWatchOn ? Color.green : Color.secondary,
-                            lineWidth: 2
-                        )
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(radioManager.isDualWatchOn ? Color.green.opacity(0.8) : Color.secondary.opacity(0.3), lineWidth: 1)
                 )
             }
 
@@ -374,6 +356,17 @@ struct RadioControlView: View {
                 ScrollView {
                     mainContent
                 }
+                .background(
+                    LinearGradient(
+                        colors: [
+                            Color(.systemBackground),
+                            Color(.secondarySystemBackground)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .ignoresSafeArea()
+                )
             } else {
                 NotConnectedView()
             }
@@ -458,13 +451,18 @@ struct RadioControlView: View {
     }
 
     private func setActiveChannel(_ index: Int) {
-        // .off means dual watch is disabled and A is the active channel
         if radioManager.activeChannel == .b {
             radioManager.setChannelB(index)
         } else {
             radioManager.setChannelA(index)
         }
     }
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(Color(uiColor: .secondarySystemBackground))
+    }
+
 }
 //
 // MARK: - VFO Control
@@ -563,12 +561,10 @@ struct VFOControl: View {
         }
         .padding()
         .frame(height: 180)
-        .background(Color(uiColor: .secondarySystemBackground))
-        .cornerRadius(12)
+        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(isActive ? Color.green : .clear, lineWidth: 3)
         )
     }
 }
-
