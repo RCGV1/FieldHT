@@ -1,0 +1,70 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project FieldHT.xcodeproj -scheme FieldHT -configuration Debug -destination "platform=iOS Simulator,name=iPhone 16e" build -showBuildTimingSummary
+
+Resolve Package Graph
+
+
+Resolved source packages:
+  SatelliteKit: https://github.com/gavineadie/SatelliteKit.git @ 2.1.1
+
+ComputePackagePrebuildTargetDependencyGraph
+
+Prepare packages
+
+CreateBuildRequest
+
+SendProjectDescription
+
+CreateBuildOperation
+
+ComputeTargetDependencyGraph
+note: Building targets in dependency order
+note: Target dependency graph (4 targets)
+    Target 'FieldHT' in project 'FieldHT'
+        ➜ Explicit dependency on target 'WidgetExtension' in project 'FieldHT'
+        ➜ Explicit dependency on target 'SatelliteKit' in project 'SatelliteKit'
+    Target 'SatelliteKit' in project 'SatelliteKit'
+        ➜ Explicit dependency on target 'SatelliteKit' in project 'SatelliteKit'
+    Target 'SatelliteKit' in project 'SatelliteKit' (no dependencies)
+    Target 'WidgetExtension' in project 'FieldHT' (no dependencies)
+
+GatherProvisioningInputs
+
+CreateBuildDescription
+
+ExecuteExternalTool /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -v -E -dM -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.0.sdk -x c -c /dev/null
+
+ExecuteExternalTool /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc --version
+
+ExecuteExternalTool /Applications/Xcode.app/Contents/Developer/usr/bin/actool --version --output-format xml1
+
+ExecuteExternalTool /Applications/Xcode.app/Contents/Developer/usr/bin/actool --print-asset-tag-combinations --output-format xml1 /Users/benjaminfaershtein/Documents/FieldHT/FieldHT/Assets.xcassets
+
+ExecuteExternalTool /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld -version_details
+
+Build description signature: 58c2bcb8233807a0835e06fd7f7d4e59
+Build description path: /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/FieldHT-bkhkrfdficylzyexnvmumnbbolba/Build/Intermediates.noindex/XCBuildData/58c2bcb8233807a0835e06fd7f7d4e59.xcbuilddata
+ClangStatCache /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.0.sdk /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/SDKStatCaches.noindex/iphonesimulator26.0-23A339-26257891a6c027eb51374368541b8346.sdkstatcache
+    cd /Users/benjaminfaershtein/Documents/FieldHT/FieldHT.xcodeproj
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.0.sdk -o /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/SDKStatCaches.noindex/iphonesimulator26.0-23A339-26257891a6c027eb51374368541b8346.sdkstatcache
+
+ProcessInfoPlistFile /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/FieldHT-bkhkrfdficylzyexnvmumnbbolba/Build/Products/Debug-iphonesimulator/WidgetExtension.appex/Info.plist /Users/benjaminfaershtein/Documents/FieldHT/Widget/Info.plist (in target 'WidgetExtension' from project 'FieldHT')
+    cd /Users/benjaminfaershtein/Documents/FieldHT
+    builtin-infoPlistUtility /Users/benjaminfaershtein/Documents/FieldHT/Widget/Info.plist -producttype com.apple.product-type.app-extension -expandbuildsettings -format binary -platform iphonesimulator -additionalcontentfile /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/FieldHT-bkhkrfdficylzyexnvmumnbbolba/Build/Intermediates.noindex/FieldHT.build/Debug-iphonesimulator/WidgetExtension.build/assetcatalog_generated_info.plist -o /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/FieldHT-bkhkrfdficylzyexnvmumnbbolba/Build/Products/Debug-iphonesimulator/WidgetExtension.appex/Info.plist
+
+ProcessInfoPlistFile /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/FieldHT-bkhkrfdficylzyexnvmumnbbolba/Build/Products/Debug-iphonesimulator/FieldHT.app/Info.plist /Users/benjaminfaershtein/Documents/FieldHT/FieldHT/Info.plist (in target 'FieldHT' from project 'FieldHT')
+    cd /Users/benjaminfaershtein/Documents/FieldHT
+    builtin-infoPlistUtility /Users/benjaminfaershtein/Documents/FieldHT/FieldHT/Info.plist -producttype com.apple.product-type.application -genpkginfo /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/FieldHT-bkhkrfdficylzyexnvmumnbbolba/Build/Products/Debug-iphonesimulator/FieldHT.app/PkgInfo -expandbuildsettings -format binary -platform iphonesimulator -additionalcontentfile /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/FieldHT-bkhkrfdficylzyexnvmumnbbolba/Build/Intermediates.noindex/FieldHT.build/Debug-iphonesimulator/FieldHT.build/assetcatalog_generated_info.plist -scanforprivacyfile /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/FieldHT-bkhkrfdficylzyexnvmumnbbolba/Build/Products/Debug-iphonesimulator/FieldHT.app/PlugIns/WidgetExtension.appex -o /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/FieldHT-bkhkrfdficylzyexnvmumnbbolba/Build/Products/Debug-iphonesimulator/FieldHT.app/Info.plist
+
+CopySwiftLibs /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/FieldHT-bkhkrfdficylzyexnvmumnbbolba/Build/Products/Debug-iphonesimulator/FieldHT.app (in target 'FieldHT' from project 'FieldHT')
+    cd /Users/benjaminfaershtein/Documents/FieldHT
+    builtin-swiftStdLibTool --copy --verbose --sign - --scan-executable /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/FieldHT-bkhkrfdficylzyexnvmumnbbolba/Build/Products/Debug-iphonesimulator/FieldHT.app/FieldHT.debug.dylib --scan-folder /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/FieldHT-bkhkrfdficylzyexnvmumnbbolba/Build/Products/Debug-iphonesimulator/FieldHT.app/Frameworks --scan-folder /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/FieldHT-bkhkrfdficylzyexnvmumnbbolba/Build/Products/Debug-iphonesimulator/FieldHT.app/PlugIns --scan-folder /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/FieldHT-bkhkrfdficylzyexnvmumnbbolba/Build/Products/Debug-iphonesimulator/FieldHT.app/SystemExtensions --scan-folder /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/FieldHT-bkhkrfdficylzyexnvmumnbbolba/Build/Products/Debug-iphonesimulator/FieldHT.app/Extensions --platform iphonesimulator --toolchain /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --destination /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/FieldHT-bkhkrfdficylzyexnvmumnbbolba/Build/Products/Debug-iphonesimulator/FieldHT.app/Frameworks --strip-bitcode --strip-bitcode-tool /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/bitcode_strip --emit-dependency-info /Users/benjaminfaershtein/Library/Developer/Xcode/DerivedData/FieldHT-bkhkrfdficylzyexnvmumnbbolba/Build/Intermediates.noindex/FieldHT.build/Debug-iphonesimulator/FieldHT.build/SwiftStdLibToolInputDependencies.dep --filter-for-swift-os
+
+Build Timing Summary
+
+ProcessInfoPlistFile (2 tasks) | 0.012 seconds
+
+CopySwiftLibs (1 task) | 0.010 seconds
+
+** BUILD SUCCEEDED **
+

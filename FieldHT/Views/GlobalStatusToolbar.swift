@@ -56,6 +56,21 @@ struct GlobalStatusToolbar: View {
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
+
+            if radioManager.hmBatteryLevel > 0,
+               radioManager.radioController?.deviceInfo.hasHandMicrophoneSpeaker == true {
+                Divider()
+                    .frame(height: 12)
+
+                HStack(spacing: 4) {
+                    Image(systemName: "mic.fill")
+                        .font(.caption)
+                        .foregroundColor(radioManager.hmBatteryLevel > 25 ? .green : (radioManager.hmBatteryLevel > 10 ? .orange : .red))
+                    Text("\(radioManager.hmBatteryLevel)%")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)

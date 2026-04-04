@@ -1,0 +1,17 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project FieldHT.xcodeproj -scheme FieldHT -configuration Debug -destination "platform=iOS Simulator,name=iPhone 16e" clean
+
+Resolve Package Graph
+
+
+Resolved source packages:
+  SatelliteKit: https://github.com/gavineadie/SatelliteKit.git @ 2.1.1
+
+CreateBuildRequest
+
+SendProjectDescription
+
+CreateBuildOperation
+
+** CLEAN SUCCEEDED **
+

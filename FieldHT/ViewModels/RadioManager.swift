@@ -68,6 +68,7 @@ public class RadioManager: ObservableObject {
     
     @Published public var batteryVoltage: Double = 0.0
     @Published public var batteryLevel: Int = 0
+    @Published public var hmBatteryLevel: Int = 0
     private var hasNotifiedLowBattery = false
     
     @Published public var isBusy: Bool = false
@@ -379,6 +380,15 @@ public class RadioManager: ObservableObject {
         let level = try await controller.batteryLevelAsPercentage()
         self.batteryVoltage = volts
         self.batteryLevel = level
+
+        // Read HM speaker-mic battery when the accessory is attached
+        if controller.deviceInfo.hasHandMicrophoneSpeaker {
+            if let hmLevel = try? await controller.rcBatteryLevel() {
+                self.hmBatteryLevel = hmLevel
+            }
+        } else {
+            self.hmBatteryLevel = 0
+        }
 
         // Fire a low-battery notification once when crossing below 10%.
         // Reset the flag when the battery recovers above 15% (e.g. plugged in).

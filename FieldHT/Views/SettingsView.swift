@@ -130,8 +130,62 @@ struct SettingsView: View {
                                 Label("HM Speaker", systemImage: "speaker.wave.3")
                             }
 
+                            Picker(
+                                selection: Binding(
+                                    get: { viewModel.settings?.aghfpCallMode ?? 0 },
+                                    set: { viewModel.updateAghfpCallMode($0) }
+                                )
+                            ) {
+                                Text("Auto").tag(0)
+                                Text("Manual").tag(1)
+                            } label: {
+                                Label("AGHFP Call Mode", systemImage: "phone")
+                            }
+
+                            if radioManager.radioController?.deviceInfo.hasHandMicrophoneSpeaker == true,
+                               radioManager.hmBatteryLevel > 0 {
+                                HStack {
+                                    Label("HM Mic Battery", systemImage: "mic.fill")
+                                    Spacer()
+                                    Text("\(radioManager.hmBatteryLevel)%")
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+
                         } header: {
                             Label("Audio", systemImage: "speaker.wave.2")
+                        }
+
+                        if radioManager.radioController?.deviceInfo.supportsNOAA == true {
+                            Section {
+                                Picker(
+                                    selection: Binding(
+                                        get: { viewModel.settings?.wxMode ?? 0 },
+                                        set: { viewModel.updateWxMode($0) }
+                                    )
+                                ) {
+                                    Text("Off").tag(0)
+                                    Text("Monitor").tag(1)
+                                    Text("Alert").tag(2)
+                                } label: {
+                                    Label("Weather Mode", systemImage: "cloud.sun")
+                                }
+
+                                Picker(
+                                    selection: Binding(
+                                        get: { viewModel.settings?.noaaCh ?? 0 },
+                                        set: { viewModel.updateNoaaCh($0) }
+                                    )
+                                ) {
+                                    ForEach(0..<10) { i in
+                                        Text("NOAA \(i + 1)").tag(i)
+                                    }
+                                } label: {
+                                    Label("NOAA Channel", systemImage: "antenna.radiowaves.left.and.right")
+                                }
+                            } header: {
+                                Label("NOAA / Weather", systemImage: "cloud.bolt")
+                            }
                         }
 
                         Section {
@@ -266,6 +320,20 @@ struct SettingsView: View {
                                 )
                             ) {
                                 Label("Imperial Units", systemImage: "ruler")
+                            }
+
+                            Picker(
+                                selection: Binding(
+                                    get: { viewModel.settings?.positioningSystem ?? 0 },
+                                    set: { viewModel.updatePositioningSystem($0) }
+                                )
+                            ) {
+                                Text("GPS").tag(0)
+                                Text("GLONASS").tag(1)
+                                Text("Beidou").tag(2)
+                                Text("GPS + GLONASS").tag(3)
+                            } label: {
+                                Label("Positioning System", systemImage: "location")
                             }
                         } header: {
                             Label("Display", systemImage: "display")

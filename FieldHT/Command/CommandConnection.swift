@@ -303,7 +303,10 @@ public class CommandConnection: BLEConnectionDelegate {
                 }
                 return .batteryLevelAsPercentage(v)
             case .rcBatteryLevel:
-                return .error(.success, "RC battery level not implemented in reply")
+                guard let v = value as? Int else {
+                    throw ProtocolError.decodeError("Expected Int for rcBatteryLevel")
+                }
+                return .rcBatteryLevel(v)
             case .unknown:
                 return .error(.invalidParameter, "Unknown power status type")
             }
@@ -733,14 +736,20 @@ public class CommandConnection: BLEConnectionDelegate {
     
     public func getRCBatteryLevel() async throws -> Int {
         let body = ProtocolEncoder.encodeReadPowerStatus(.rcBatteryLevel)
-        _ = try await sendCommandAndWaitForReply(
+        let reply = try await sendCommandAndWaitForReply(
             commandGroup: .basic,
             command: BasicCommand.readStatus.rawValue,
             body: body
         )
-        
-        // RC battery level handling would go here
-        throw ProtocolError.notImplemented
+
+        guard case .reply(.rcBatteryLevel(let level)) = reply else {
+            if case .reply(.error(let status, let message)) = reply {
+                throw ProtocolError.commandFailed(status, message)
+            }
+            throw ProtocolError.invalidReply
+        }
+
+        return level
     }
     
     public func getPosition() async throws -> Position {

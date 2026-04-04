@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0.0",
+  "created_at": "2026-04-01T00:44:17.290400+00:00",
+  "type": "compilation-diagnostics",
+  "build": {
+    "entrypoint": "project",
+    "path": "FieldHT.xcodeproj",
+    "scheme": "FieldHT",
+    "configuration": "Debug",
+    "destination": "platform=iOS Simulator,name=iPhone 16e"
+  },
+  "threshold_ms": 100,
+  "build_duration_seconds": 11.883,
+  "build_success": true,
+  "raw_log_path": ".build-benchmark/20260401T004404Z-fieldht-diagnostics.log",
+  "warnings": [],
+  "summary": {
+    "total_warnings": 0,
+    "function_body_warnings": 0,
+    "expression_warnings": 0,
+    "slowest_ms": 0
+  }
+}

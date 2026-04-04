@@ -393,8 +393,34 @@ public class SettingsViewModel: ObservableObject {
         updateSettings(current)
     }
 
-    /// Update NOAA Weather Channel
-    
+    /// Update wxMode
+    public func updateWxMode(_ value: Int) {
+        guard var current = settings else { return }
+        current.wxMode = value
+        updateSettings(current)
+    }
+
+    /// Update noaaCh
+    public func updateNoaaCh(_ value: Int) {
+        guard var current = settings else { return }
+        current.noaaCh = value
+        updateSettings(current)
+    }
+
+    /// Update aghfpCallMode
+    public func updateAghfpCallMode(_ value: Int) {
+        guard var current = settings else { return }
+        current.aghfpCallMode = value
+        updateSettings(current)
+    }
+
+    /// Update positioningSystem
+    public func updatePositioningSystem(_ value: Int) {
+        guard var current = settings else { return }
+        current.positioningSystem = value
+        updateSettings(current)
+    }
+
     /// Load PF configuration from the radio
     public func loadPFConfig() {
         guard let radioController = radioController else {

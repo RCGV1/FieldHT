@@ -1,0 +1,980 @@
+{
+  "schema_version": "1.2.0",
+  "created_at": "2026-04-01T00:49:00.586139+00:00",
+  "build": {
+    "entrypoint": "project",
+    "path": "FieldHT.xcodeproj",
+    "scheme": "FieldHT",
+    "configuration": "Debug",
+    "destination": "platform=iOS Simulator,name=iPhone 16e",
+    "derived_data_path": "",
+    "command": "xcodebuild -project FieldHT.xcodeproj -scheme FieldHT -configuration Debug -destination \"platform=iOS Simulator,name=iPhone 16e\""
+  },
+  "environment": {
+    "host": "Benjamins-MacBook-Pro.local",
+    "macos_version": "macOS-26.0.1-arm64-arm-64bit-Mach-O",
+    "xcode_version": "Xcode 26.0.1\nBuild version 17A400",
+    "cwd": "/Users/benjaminfaershtein/Documents/FieldHT"
+  },
+  "runs": {
+    "clean": [
+      {
+        "id": "clean-1",
+        "build_type": "clean",
+        "duration_seconds": 11.517,
+        "success": true,
+        "exit_code": 0,
+        "command": "xcodebuild -project FieldHT.xcodeproj -scheme FieldHT -configuration Debug -destination \"platform=iOS Simulator,name=iPhone 16e\" build -showBuildTimingSummary",
+        "raw_log_path": ".build-benchmark/20260401T004650Z-fieldht-clean-1.log",
+        "timing_summary_categories": [
+          {
+            "name": "SwiftCompile",
+            "seconds": 30.273,
+            "task_count": 29
+          },
+          {
+            "name": "CopyPNGFile",
+            "seconds": 5.147,
+            "task_count": 160
+          },
+          {
+            "name": "SwiftEmitModule",
+            "seconds": 2.39,
+            "task_count": 3
+          },
+          {
+            "name": "CompileAssetCatalogVariant",
+            "seconds": 1.326,
+            "task_count": 2
+          },
+          {
+            "name": "SwiftDriver",
+            "seconds": 0.931,
+            "task_count": 3
+          },
+          {
+            "name": "Ld",
+            "seconds": 0.711,
+            "task_count": 7
+          },
+          {
+            "name": "ValidateEmbeddedBinary",
+            "seconds": 0.508,
+            "task_count": 1
+          },
+          {
+            "name": "ExtractAppIntentsMetadata",
+            "seconds": 0.34,
+            "task_count": 3
+          },
+          {
+            "name": "CodeSign",
+            "seconds": 0.16,
+            "task_count": 6
+          },
+          {
+            "name": "AppIntentsSSUTraining",
+            "seconds": 0.055,
+            "task_count": 2
+          },
+          {
+            "name": "GenerateAssetSymbols",
+            "seconds": 0.042,
+            "task_count": 2
+          },
+          {
+            "name": "Copy",
+            "seconds": 0.026,
+            "task_count": 14
+          },
+          {
+            "name": "RegisterExecutionPolicyException",
+            "seconds": 0.021,
+            "task_count": 3
+          },
+          {
+            "name": "ProcessInfoPlistFile",
+            "seconds": 0.015,
+            "task_count": 2
+          },
+          {
+            "name": "CopySwiftLibs",
+            "seconds": 0.01,
+            "task_count": 1
+          },
+          {
+            "name": "WriteAuxiliaryFile",
+            "seconds": 0.008,
+            "task_count": 41
+          },
+          {
+            "name": "ProcessProductPackagingDER",
+            "seconds": 0.007,
+            "task_count": 2
+          },
+          {
+            "name": "ConstructStubExecutorLinkFileList",
+            "seconds": 0.005,
+            "task_count": 2
+          },
+          {
+            "name": "SwiftDriver Compilation Requirements",
+            "seconds": 0.004,
+            "task_count": 3
+          },
+          {
+            "name": "LinkAssetCatalog",
+            "seconds": 0.004,
+            "task_count": 2
+          },
+          {
+            "name": "Touch",
+            "seconds": 0.003,
+            "task_count": 2
+          },
+          {
+            "name": "CpResource",
+            "seconds": 0.002,
+            "task_count": 1
+          },
+          {
+            "name": "SwiftDriver Compilation",
+            "seconds": 0.002,
+            "task_count": 3
+          },
+          {
+            "name": "SwiftMergeGeneratedHeaders",
+            "seconds": 0.001,
+            "task_count": 3
+          },
+          {
+            "name": "ProcessProductPackaging",
+            "seconds": 0.001,
+            "task_count": 2
+          },
+          {
+            "name": "Validate",
+            "seconds": 0.0,
+            "task_count": 1
+          }
+        ]
+      },
+      {
+        "id": "clean-2",
+        "build_type": "clean",
+        "duration_seconds": 11.54,
+        "success": true,
+        "exit_code": 0,
+        "command": "xcodebuild -project FieldHT.xcodeproj -scheme FieldHT -configuration Debug -destination \"platform=iOS Simulator,name=iPhone 16e\" build -showBuildTimingSummary",
+        "raw_log_path": ".build-benchmark/20260401T004650Z-fieldht-clean-2.log",
+        "timing_summary_categories": [
+          {
+            "name": "SwiftCompile",
+            "seconds": 27.652,
+            "task_count": 29
+          },
+          {
+            "name": "CopyPNGFile",
+            "seconds": 5.424,
+            "task_count": 160
+          },
+          {
+            "name": "SwiftEmitModule",
+            "seconds": 1.845,
+            "task_count": 3
+          },
+          {
+            "name": "CompileAssetCatalogVariant",
+            "seconds": 1.178,
+            "task_count": 2
+          },
+          {
+            "name": "Ld",
+            "seconds": 0.788,
+            "task_count": 7
+          },
+          {
+            "name": "SwiftDriver",
+            "seconds": 0.788,
+            "task_count": 3
+          },
+          {
+            "name": "ValidateEmbeddedBinary",
+            "seconds": 0.448,
+            "task_count": 1
+          },
+          {
+            "name": "ExtractAppIntentsMetadata",
+            "seconds": 0.329,
+            "task_count": 3
+          },
+          {
+            "name": "CodeSign",
+            "seconds": 0.127,
+            "task_count": 6
+          },
+          {
+            "name": "AppIntentsSSUTraining",
+            "seconds": 0.062,
+            "task_count": 2
+          },
+          {
+            "name": "GenerateAssetSymbols",
+            "seconds": 0.038,
+            "task_count": 2
+          },
+          {
+            "name": "RegisterExecutionPolicyException",
+            "seconds": 0.021,
+            "task_count": 3
+          },
+          {
+            "name": "Copy",
+            "seconds": 0.018,
+            "task_count": 14
+          },
+          {
+            "name": "ProcessInfoPlistFile",
+            "seconds": 0.014,
+            "task_count": 2
+          },
+          {
+            "name": "CopySwiftLibs",
+            "seconds": 0.01,
+            "task_count": 1
+          },
+          {
+            "name": "WriteAuxiliaryFile",
+            "seconds": 0.008,
+            "task_count": 41
+          },
+          {
+            "name": "ProcessProductPackagingDER",
+            "seconds": 0.007,
+            "task_count": 2
+          },
+          {
+            "name": "ConstructStubExecutorLinkFileList",
+            "seconds": 0.005,
+            "task_count": 2
+          },
+          {
+            "name": "Touch",
+            "seconds": 0.005,
+            "task_count": 2
+          },
+          {
+            "name": "LinkAssetCatalog",
+            "seconds": 0.005,
+            "task_count": 2
+          },
+          {
+            "name": "SwiftDriver Compilation Requirements",
+            "seconds": 0.001,
+            "task_count": 3
+          },
+          {
+            "name": "SwiftDriver Compilation",
+            "seconds": 0.001,
+            "task_count": 3
+          },
+          {
+            "name": "CpResource",
+            "seconds": 0.001,
+            "task_count": 1
+          },
+          {
+            "name": "SwiftMergeGeneratedHeaders",
+            "seconds": 0.001,
+            "task_count": 3
+          },
+          {
+            "name": "ProcessProductPackaging",
+            "seconds": 0.001,
+            "task_count": 2
+          },
+          {
+            "name": "Validate",
+            "seconds": 0.0,
+            "task_count": 1
+          }
+        ]
+      },
+      {
+        "id": "clean-3",
+        "build_type": "clean",
+        "duration_seconds": 11.215,
+        "success": true,
+        "exit_code": 0,
+        "command": "xcodebuild -project FieldHT.xcodeproj -scheme FieldHT -configuration Debug -destination \"platform=iOS Simulator,name=iPhone 16e\" build -showBuildTimingSummary",
+        "raw_log_path": ".build-benchmark/20260401T004650Z-fieldht-clean-3.log",
+        "timing_summary_categories": [
+          {
+            "name": "SwiftCompile",
+            "seconds": 28.371,
+            "task_count": 29
+          },
+          {
+            "name": "CopyPNGFile",
+            "seconds": 5.119,
+            "task_count": 160
+          },
+          {
+            "name": "SwiftEmitModule",
+            "seconds": 1.884,
+            "task_count": 3
+          },
+          {
+            "name": "CompileAssetCatalogVariant",
+            "seconds": 1.544,
+            "task_count": 2
+          },
+          {
+            "name": "SwiftDriver",
+            "seconds": 0.82,
+            "task_count": 3
+          },
+          {
+            "name": "Ld",
+            "seconds": 0.727,
+            "task_count": 7
+          },
+          {
+            "name": "ValidateEmbeddedBinary",
+            "seconds": 0.516,
+            "task_count": 1
+          },
+          {
+            "name": "ExtractAppIntentsMetadata",
+            "seconds": 0.34,
+            "task_count": 3
+          },
+          {
+            "name": "CodeSign",
+            "seconds": 0.17,
+            "task_count": 6
+          },
+          {
+            "name": "AppIntentsSSUTraining",
+            "seconds": 0.053,
+            "task_count": 2
+          },
+          {
+            "name": "GenerateAssetSymbols",
+            "seconds": 0.046,
+            "task_count": 2
+          },
+          {
+            "name": "RegisterExecutionPolicyException",
+            "seconds": 0.023,
+            "task_count": 3
+          },
+          {
+            "name": "Copy",
+            "seconds": 0.021,
+            "task_count": 14
+          },
+          {
+            "name": "ProcessInfoPlistFile",
+            "seconds": 0.014,
+            "task_count": 2
+          },
+          {
+            "name": "ProcessProductPackagingDER",
+            "seconds": 0.011,
+            "task_count": 2
+          },
+          {
+            "name": "CopySwiftLibs",
+            "seconds": 0.01,
+            "task_count": 1
+          },
+          {
+            "name": "WriteAuxiliaryFile",
+            "seconds": 0.007,
+            "task_count": 41
+          },
+          {
+            "name": "ConstructStubExecutorLinkFileList",
+            "seconds": 0.006,
+            "task_count": 2
+          },
+          {
+            "name": "SwiftDriver Compilation",
+            "seconds": 0.005,
+            "task_count": 3
+          },
+          {
+            "name": "Touch",
+            "seconds": 0.004,
+            "task_count": 2
+          },
+          {
+            "name": "LinkAssetCatalog",
+            "seconds": 0.003,
+            "task_count": 2
+          },
+          {
+            "name": "CpResource",
+            "seconds": 0.002,
+            "task_count": 1
+          },
+          {
+            "name": "SwiftDriver Compilation Requirements",
+            "seconds": 0.001,
+            "task_count": 3
+          },
+          {
+            "name": "SwiftMergeGeneratedHeaders",
+            "seconds": 0.001,
+            "task_count": 3
+          },
+          {
+            "name": "ProcessProductPackaging",
+            "seconds": 0.001,
+            "task_count": 2
+          },
+          {
+            "name": "Validate",
+            "seconds": 0.0,
+            "task_count": 1
+          }
+        ]
+      }
+    ],
+    "incremental": [
+      {
+        "id": "zero-change-1",
+        "build_type": "zero-change",
+        "duration_seconds": 2.246,
+        "success": true,
+        "exit_code": 0,
+        "command": "xcodebuild -project FieldHT.xcodeproj -scheme FieldHT -configuration Debug -destination \"platform=iOS Simulator,name=iPhone 16e\" build -showBuildTimingSummary",
+        "raw_log_path": ".build-benchmark/20260401T004650Z-fieldht-zero-change-1.log",
+        "timing_summary_categories": [
+          {
+            "name": "ValidateEmbeddedBinary",
+            "seconds": 0.456,
+            "task_count": 1
+          },
+          {
+            "name": "CodeSign",
+            "seconds": 0.095,
+            "task_count": 3
+          },
+          {
+            "name": "ProcessInfoPlistFile",
+            "seconds": 0.012,
+            "task_count": 2
+          },
+          {
+            "name": "CopySwiftLibs",
+            "seconds": 0.012,
+            "task_count": 1
+          },
+          {
+            "name": "Copy",
+            "seconds": 0.007,
+            "task_count": 1
+          },
+          {
+            "name": "Validate",
+            "seconds": 0.0,
+            "task_count": 1
+          }
+        ]
+      },
+      {
+        "id": "zero-change-2",
+        "build_type": "zero-change",
+        "duration_seconds": 1.509,
+        "success": true,
+        "exit_code": 0,
+        "command": "xcodebuild -project FieldHT.xcodeproj -scheme FieldHT -configuration Debug -destination \"platform=iOS Simulator,name=iPhone 16e\" build -showBuildTimingSummary",
+        "raw_log_path": ".build-benchmark/20260401T004650Z-fieldht-zero-change-2.log",
+        "timing_summary_categories": [
+          {
+            "name": "ProcessInfoPlistFile",
+            "seconds": 0.012,
+            "task_count": 2
+          },
+          {
+            "name": "CopySwiftLibs",
+            "seconds": 0.01,
+            "task_count": 1
+          }
+        ]
+      },
+      {
+        "id": "zero-change-3",
+        "build_type": "zero-change",
+        "duration_seconds": 1.432,
+        "success": true,
+        "exit_code": 0,
+        "command": "xcodebuild -project FieldHT.xcodeproj -scheme FieldHT -configuration Debug -destination \"platform=iOS Simulator,name=iPhone 16e\" build -showBuildTimingSummary",
+        "raw_log_path": ".build-benchmark/20260401T004650Z-fieldht-zero-change-3.log",
+        "timing_summary_categories": [
+          {
+            "name": "ProcessInfoPlistFile",
+            "seconds": 0.012,
+            "task_count": 2
+          },
+          {
+            "name": "CopySwiftLibs",
+            "seconds": 0.01,
+            "task_count": 1
+          }
+        ]
+      }
+    ],
+    "cached_clean": [
+      {
+        "id": "cached-clean-1",
+        "build_type": "cached-clean",
+        "duration_seconds": 17.261,
+        "success": true,
+        "exit_code": 0,
+        "command": "xcodebuild -project FieldHT.xcodeproj -scheme FieldHT -configuration Debug -destination \"platform=iOS Simulator,name=iPhone 16e\" -derivedDataPath /var/folders/pm/b8pk4ccj1fn9p16yp_t2xwtw0000gn/T/xcode-bench-dd-yypjhhwm build -showBuildTimingSummary",
+        "raw_log_path": ".build-benchmark/20260401T004650Z-fieldht-cached-clean-1.log",
+        "timing_summary_categories": [
+          {
+            "name": "SwiftCompile",
+            "seconds": 48.521,
+            "task_count": 29
+          },
+          {
+            "name": "CopyPNGFile",
+            "seconds": 4.835,
+            "task_count": 160
+          },
+          {
+            "name": "CompileAssetCatalogVariant",
+            "seconds": 3.736,
+            "task_count": 2
+          },
+          {
+            "name": "SwiftEmitModule",
+            "seconds": 1.731,
+            "task_count": 3
+          },
+          {
+            "name": "SwiftDriver",
+            "seconds": 1.399,
+            "task_count": 3
+          },
+          {
+            "name": "Ld",
+            "seconds": 0.643,
+            "task_count": 7
+          },
+          {
+            "name": "ValidateEmbeddedBinary",
+            "seconds": 0.512,
+            "task_count": 1
+          },
+          {
+            "name": "ExtractAppIntentsMetadata",
+            "seconds": 0.273,
+            "task_count": 3
+          },
+          {
+            "name": "CodeSign",
+            "seconds": 0.112,
+            "task_count": 6
+          },
+          {
+            "name": "GenerateAssetSymbols",
+            "seconds": 0.048,
+            "task_count": 2
+          },
+          {
+            "name": "AppIntentsSSUTraining",
+            "seconds": 0.038,
+            "task_count": 2
+          },
+          {
+            "name": "Copy",
+            "seconds": 0.029,
+            "task_count": 14
+          },
+          {
+            "name": "RegisterExecutionPolicyException",
+            "seconds": 0.019,
+            "task_count": 3
+          },
+          {
+            "name": "ProcessInfoPlistFile",
+            "seconds": 0.015,
+            "task_count": 2
+          },
+          {
+            "name": "WriteAuxiliaryFile",
+            "seconds": 0.012,
+            "task_count": 41
+          },
+          {
+            "name": "CopySwiftLibs",
+            "seconds": 0.01,
+            "task_count": 1
+          },
+          {
+            "name": "ProcessProductPackagingDER",
+            "seconds": 0.007,
+            "task_count": 2
+          },
+          {
+            "name": "ConstructStubExecutorLinkFileList",
+            "seconds": 0.005,
+            "task_count": 2
+          },
+          {
+            "name": "Touch",
+            "seconds": 0.003,
+            "task_count": 2
+          },
+          {
+            "name": "LinkAssetCatalog",
+            "seconds": 0.002,
+            "task_count": 2
+          },
+          {
+            "name": "SwiftMergeGeneratedHeaders",
+            "seconds": 0.002,
+            "task_count": 3
+          },
+          {
+            "name": "SwiftDriver Compilation Requirements",
+            "seconds": 0.001,
+            "task_count": 3
+          },
+          {
+            "name": "SwiftDriver Compilation",
+            "seconds": 0.001,
+            "task_count": 3
+          },
+          {
+            "name": "CpResource",
+            "seconds": 0.001,
+            "task_count": 1
+          },
+          {
+            "name": "ProcessProductPackaging",
+            "seconds": 0.001,
+            "task_count": 2
+          },
+          {
+            "name": "Validate",
+            "seconds": 0.0,
+            "task_count": 1
+          }
+        ]
+      },
+      {
+        "id": "cached-clean-2",
+        "build_type": "cached-clean",
+        "duration_seconds": 17.023,
+        "success": true,
+        "exit_code": 0,
+        "command": "xcodebuild -project FieldHT.xcodeproj -scheme FieldHT -configuration Debug -destination \"platform=iOS Simulator,name=iPhone 16e\" -derivedDataPath /var/folders/pm/b8pk4ccj1fn9p16yp_t2xwtw0000gn/T/xcode-bench-dd-yypjhhwm build -showBuildTimingSummary",
+        "raw_log_path": ".build-benchmark/20260401T004650Z-fieldht-cached-clean-2.log",
+        "timing_summary_categories": [
+          {
+            "name": "SwiftCompile",
+            "seconds": 46.293,
+            "task_count": 29
+          },
+          {
+            "name": "CopyPNGFile",
+            "seconds": 4.859,
+            "task_count": 160
+          },
+          {
+            "name": "SwiftEmitModule",
+            "seconds": 1.723,
+            "task_count": 3
+          },
+          {
+            "name": "SwiftDriver",
+            "seconds": 1.334,
+            "task_count": 3
+          },
+          {
+            "name": "CompileAssetCatalogVariant",
+            "seconds": 1.181,
+            "task_count": 2
+          },
+          {
+            "name": "Ld",
+            "seconds": 0.629,
+            "task_count": 7
+          },
+          {
+            "name": "ValidateEmbeddedBinary",
+            "seconds": 0.518,
+            "task_count": 1
+          },
+          {
+            "name": "ExtractAppIntentsMetadata",
+            "seconds": 0.261,
+            "task_count": 3
+          },
+          {
+            "name": "CodeSign",
+            "seconds": 0.128,
+            "task_count": 6
+          },
+          {
+            "name": "Copy",
+            "seconds": 0.045,
+            "task_count": 14
+          },
+          {
+            "name": "GenerateAssetSymbols",
+            "seconds": 0.043,
+            "task_count": 2
+          },
+          {
+            "name": "AppIntentsSSUTraining",
+            "seconds": 0.039,
+            "task_count": 2
+          },
+          {
+            "name": "RegisterExecutionPolicyException",
+            "seconds": 0.02,
+            "task_count": 3
+          },
+          {
+            "name": "ProcessInfoPlistFile",
+            "seconds": 0.015,
+            "task_count": 2
+          },
+          {
+            "name": "WriteAuxiliaryFile",
+            "seconds": 0.011,
+            "task_count": 41
+          },
+          {
+            "name": "CopySwiftLibs",
+            "seconds": 0.01,
+            "task_count": 1
+          },
+          {
+            "name": "ProcessProductPackagingDER",
+            "seconds": 0.008,
+            "task_count": 2
+          },
+          {
+            "name": "ConstructStubExecutorLinkFileList",
+            "seconds": 0.004,
+            "task_count": 2
+          },
+          {
+            "name": "Touch",
+            "seconds": 0.003,
+            "task_count": 2
+          },
+          {
+            "name": "LinkAssetCatalog",
+            "seconds": 0.003,
+            "task_count": 2
+          },
+          {
+            "name": "SwiftDriver Compilation Requirements",
+            "seconds": 0.003,
+            "task_count": 3
+          },
+          {
+            "name": "SwiftMergeGeneratedHeaders",
+            "seconds": 0.003,
+            "task_count": 3
+          },
+          {
+            "name": "CpResource",
+            "seconds": 0.002,
+            "task_count": 1
+          },
+          {
+            "name": "SwiftDriver Compilation",
+            "seconds": 0.001,
+            "task_count": 3
+          },
+          {
+            "name": "ProcessProductPackaging",
+            "seconds": 0.001,
+            "task_count": 2
+          },
+          {
+            "name": "Validate",
+            "seconds": 0.0,
+            "task_count": 1
+          }
+        ]
+      },
+      {
+        "id": "cached-clean-3",
+        "build_type": "cached-clean",
+        "duration_seconds": 16.929,
+        "success": true,
+        "exit_code": 0,
+        "command": "xcodebuild -project FieldHT.xcodeproj -scheme FieldHT -configuration Debug -destination \"platform=iOS Simulator,name=iPhone 16e\" -derivedDataPath /var/folders/pm/b8pk4ccj1fn9p16yp_t2xwtw0000gn/T/xcode-bench-dd-yypjhhwm build -showBuildTimingSummary",
+        "raw_log_path": ".build-benchmark/20260401T004650Z-fieldht-cached-clean-3.log",
+        "timing_summary_categories": [
+          {
+            "name": "SwiftCompile",
+            "seconds": 46.308,
+            "task_count": 29
+          },
+          {
+            "name": "CopyPNGFile",
+            "seconds": 4.984,
+            "task_count": 160
+          },
+          {
+            "name": "SwiftEmitModule",
+            "seconds": 1.764,
+            "task_count": 3
+          },
+          {
+            "name": "SwiftDriver",
+            "seconds": 1.36,
+            "task_count": 3
+          },
+          {
+            "name": "CompileAssetCatalogVariant",
+            "seconds": 1.162,
+            "task_count": 2
+          },
+          {
+            "name": "Ld",
+            "seconds": 0.628,
+            "task_count": 7
+          },
+          {
+            "name": "ValidateEmbeddedBinary",
+            "seconds": 0.515,
+            "task_count": 1
+          },
+          {
+            "name": "ExtractAppIntentsMetadata",
+            "seconds": 0.267,
+            "task_count": 3
+          },
+          {
+            "name": "CodeSign",
+            "seconds": 0.13,
+            "task_count": 6
+          },
+          {
+            "name": "GenerateAssetSymbols",
+            "seconds": 0.044,
+            "task_count": 2
+          },
+          {
+            "name": "AppIntentsSSUTraining",
+            "seconds": 0.039,
+            "task_count": 2
+          },
+          {
+            "name": "Copy",
+            "seconds": 0.029,
+            "task_count": 14
+          },
+          {
+            "name": "RegisterExecutionPolicyException",
+            "seconds": 0.024,
+            "task_count": 3
+          },
+          {
+            "name": "ProcessInfoPlistFile",
+            "seconds": 0.021,
+            "task_count": 2
+          },
+          {
+            "name": "CopySwiftLibs",
+            "seconds": 0.01,
+            "task_count": 1
+          },
+          {
+            "name": "ProcessProductPackagingDER",
+            "seconds": 0.009,
+            "task_count": 2
+          },
+          {
+            "name": "WriteAuxiliaryFile",
+            "seconds": 0.009,
+            "task_count": 41
+          },
+          {
+            "name": "ConstructStubExecutorLinkFileList",
+            "seconds": 0.004,
+            "task_count": 2
+          },
+          {
+            "name": "LinkAssetCatalog",
+            "seconds": 0.004,
+            "task_count": 2
+          },
+          {
+            "name": "Touch",
+            "seconds": 0.003,
+            "task_count": 2
+          },
+          {
+            "name": "SwiftDriver Compilation Requirements",
+            "seconds": 0.003,
+            "task_count": 3
+          },
+          {
+            "name": "SwiftMergeGeneratedHeaders",
+            "seconds": 0.003,
+            "task_count": 3
+          },
+          {
+            "name": "CpResource",
+            "seconds": 0.002,
+            "task_count": 1
+          },
+          {
+            "name": "ProcessProductPackaging",
+            "seconds": 0.001,
+            "task_count": 2
+          },
+          {
+            "name": "SwiftDriver Compilation",
+            "seconds": 0.001,
+            "task_count": 3
+          },
+          {
+            "name": "Validate",
+            "seconds": 0.0,
+            "task_count": 1
+          }
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "clean": {
+      "count": 3,
+      "min_seconds": 11.215,
+      "max_seconds": 11.54,
+      "median_seconds": 11.517,
+      "average_seconds": 11.424
+    },
+    "incremental": {
+      "count": 3,
+      "min_seconds": 1.432,
+      "max_seconds": 2.246,
+      "median_seconds": 1.509,
+      "average_seconds": 1.729
+    },
+    "cached_clean": {
+      "count": 3,
+      "min_seconds": 16.929,
+      "max_seconds": 17.261,
+      "median_seconds": 17.023,
+      "average_seconds": 17.071
+    }
+  },
+  "notes": []
+}

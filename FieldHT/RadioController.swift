@@ -282,6 +282,11 @@ public class RadioController: ObservableObject {
     public func batteryLevelAsPercentage() async throws -> Int {
         return try await connection.getBatteryLevelAsPercentage()
     }
+
+    /// Get RC (hand microphone / speaker-mic) battery level
+    public func rcBatteryLevel() async throws -> Int {
+        return try await connection.getRCBatteryLevel()
+    }
     
     /// Get position
     public func position() async throws -> Position {
