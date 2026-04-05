@@ -6,12 +6,19 @@
 import UserNotifications
 
 final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = NotificationManager()
     static let lowBatteryCategoryID = "LOW_BATTERY"
     static let enableLowPowerActionID = "ENABLE_LOW_POWER"
 
     weak var radioManager: RadioManager?
+    private var pendingEnableLowPowerAction = false
+
+    private override init() {
+        super.init()
+    }
 
     func requestPermission() {
+        setupCategories()
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
             if granted {
                 self.setupCategories()
@@ -23,7 +30,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         let action = UNNotificationAction(
             identifier: Self.enableLowPowerActionID,
             title: "Enable Low Power Mode",
-            options: []
+            options: [.foreground]
         )
         let category = UNNotificationCategory(
             identifier: Self.lowBatteryCategoryID,
@@ -35,6 +42,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func scheduleLowBatteryNotification(level: Int) {
+        print("NotificationManager: scheduling low battery notification at \(level)%")
         let content = UNMutableNotificationContent()
         content.title = "Radio Battery Low"
         content.body = "Battery is at \(level)%. Enable Low Power Mode to extend usage."
@@ -47,6 +55,15 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             trigger: nil // deliver immediately
         )
         UNUserNotificationCenter.current().add(request)
+    }
+
+    func performPendingActionsIfNeeded() {
+        guard pendingEnableLowPowerAction else { return }
+        print("NotificationManager: applying pending low power action")
+        pendingEnableLowPowerAction = false
+        Task { @MainActor in
+            radioManager?.enableLowPowerMode()
+        }
     }
 
     // MARK: - UNUserNotificationCenterDelegate
@@ -65,9 +82,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         if response.actionIdentifier == Self.enableLowPowerActionID {
-            Task { @MainActor in
-                self.radioManager?.enableLowPowerMode()
-            }
+            print("NotificationManager: low power action tapped")
+            pendingEnableLowPowerAction = true
+            performPendingActionsIfNeeded()
         }
         completionHandler()
     }

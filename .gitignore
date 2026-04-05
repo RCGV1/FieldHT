@@ -25,3 +25,9 @@ __pycache__/
 
 # Local build secrets (not committed)
 Configs/FieldHT-Secrets.xcconfig
+
+# Local BLE capture output
+.ble-captures/
+
+# Local device build archives
+.device-build-*/

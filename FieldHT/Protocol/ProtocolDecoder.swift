@@ -504,10 +504,7 @@ public struct ProtocolDecoder {
                 throw ProtocolError.decodeError("Invalid PFActionType: \(actionRaw)")
             }
 
-            guard let effect = PFEffectType(rawValue: effectRaw) else {
-                throw ProtocolError.decodeError("Invalid PFEffectType: \(effectRaw)")
-            }
-
+            let effect = PFEffectType(rawValue: effectRaw)
             pfArray.append(PF(buttonID: buttonID, action: action, effect: effect))
         }
 

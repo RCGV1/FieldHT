@@ -14,7 +14,11 @@ public class RadioController: ObservableObject {
     
     /// Create a new BLE radio controller
     public static func newBLE(deviceUUID: UUID, radioManager: RadioManager) -> RadioController {
-        let connection = CommandConnection.newBLE(deviceUUID: deviceUUID, radioManager: radioManager)
+        let connection = CommandConnection.newBLE(
+            deviceUUID: deviceUUID,
+            radioManager: radioManager,
+            enableStateRestoration: false
+        )
         return RadioController(connection: connection)
     }
     
@@ -104,8 +108,23 @@ public class RadioController: ObservableObject {
             self?.handleEvent(event)
         }
         
-        // Enable status changed event
-        try await connection.enableEvent(.htStatusChanged)
+        for eventType in [
+            EventType.htStatusChanged,
+            .htChChanged,
+            .htSettingsChanged,
+            .radioStatusChanged,
+            .userAction,
+            .systemEvent,
+            .bssSettingsChanged,
+            .positionChanged,
+            .dataRxd,
+            .dataTxd,
+            .newInquiryData,
+            .restoreFactorySettings,
+            .ringingStopped
+        ] {
+            try? await connection.enableEvent(eventType)
+        }
         
         // Initialize state
         let newState = RadioState(
@@ -196,6 +215,9 @@ public class RadioController: ObservableObject {
             case .statusChanged(let status):
                 currentState.status = status
                 self.state = currentState
+            case .radioStatusChanged(let status):
+                currentState.status = status
+                self.state = currentState
             case .channelChanged(let channel):
                 // Update channel in the appropriate region
                 let currentRegion = currentState.status.currRegion
@@ -212,6 +234,18 @@ public class RadioController: ObservableObject {
             case .settingsChanged(let settings):
                 currentState.settings = settings
                 self.state = currentState
+            case .beaconSettingsChanged(let settings):
+                currentState.beaconSettings = settings
+                self.state = currentState
+            case .positionChanged(let position):
+                print("RadioController: positionChanged \(position)")
+            case .tncDataFragmentReceived(let fragment):
+                print("RadioController: dataRxd fragment=\(fragment.fragmentID) final=\(fragment.isFinalFragment) bytes=\(fragment.data.count)")
+            case .tncDataFragmentTransmitted(let fragment):
+                print("RadioController: dataTxd fragment=\(fragment.fragmentID) final=\(fragment.isFinalFragment) bytes=\(fragment.data.count)")
+            case .raw(let eventType, let data):
+                let hex = data.map { String(format: "%02hhx", $0) }.joined()
+                print("RadioController: raw event \(eventType) body=\(hex)")
             default:
                 break
             }
@@ -546,6 +580,10 @@ public class RadioController: ObservableObject {
     /// Set PF configuration
     public func setPF(_ config: PFConfig) async throws {
         try await connection.setPF(config)
+    }
+
+    public func getPFActionsRaw() async throws -> Data {
+        try await connection.getPFActionsRaw()
     }
 
     // MARK: - Beacon Settings

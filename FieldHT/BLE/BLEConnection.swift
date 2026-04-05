@@ -42,8 +42,6 @@ public enum BLEError: LocalizedError {
 @MainActor
 public class BLEConnection: NSObject {
 
-    private static let bleCaptureDefaultsKey = "com.fieldHT.debug.bleCapture"
-
     private var centralManager: CBCentralManager!
     private var peripheral: CBPeripheral?
 
@@ -69,6 +67,7 @@ public class BLEConnection: NSObject {
     private var didRequestDisconnect: Bool = false
     private var didReachReadyState: Bool = false
     private let restoreIdentifier: String
+    private let stateRestorationEnabled: Bool
 
     private var restorePendingServiceDiscovery: Bool = false
     private var isDiscoveringServices: Bool = false
@@ -85,22 +84,27 @@ public class BLEConnection: NSObject {
         indicateCharacteristic != nil
     }
 
-    public init(deviceUUID: UUID, radioManager: RadioManager? = nil) {
+    public init(
+        deviceUUID: UUID,
+        radioManager: RadioManager? = nil,
+        enableStateRestoration: Bool = true
+    ) {
         self.deviceUUID = deviceUUID
         self.restoreIdentifier = "com.fieldHT.ble.\(deviceUUID.uuidString)"
+        self.stateRestorationEnabled = enableStateRestoration
         self.radioManager = radioManager
         super.init()
 
-        // CoreBluetooth requires the delegate to implement state restoration callbacks at init time
-        // when a restore identifier is provided.
-        self.centralManager = CBCentralManager(
-            delegate: self,
-            queue: nil,
-            options: [
-                CBCentralManagerOptionRestoreIdentifierKey: restoreIdentifier,
-                CBCentralManagerOptionShowPowerAlertKey: true
-            ]
-        )
+        var options: [String: Any] = [
+            CBCentralManagerOptionShowPowerAlertKey: true
+        ]
+        if enableStateRestoration {
+            // Restore only the main radio transport. The optional speaker-mic BLE link
+            // should stay fully manual so it cannot silently reappear and compete.
+            options[CBCentralManagerOptionRestoreIdentifierKey] = restoreIdentifier
+        }
+
+        self.centralManager = CBCentralManager(delegate: self, queue: nil, options: options)
     }
 
     // MARK: - Public API
@@ -165,8 +169,14 @@ public class BLEConnection: NSObject {
         let hex = data.map { String(format: "%02hhx", $0) }.joined()
         print("[BLE-SEND] Writing \(data.count) bytes: \(hex)")
 
-        if UserDefaults.standard.bool(forKey: Self.bleCaptureDefaultsKey) {
-            Task { await BLEPacketCapture.shared.record(direction: .tx, characteristic: writeCharacteristic, data: data) }
+        if BLECaptureStore.isEnabled {
+            Task {
+                await BLECaptureStore.shared.recordPacket(
+                    direction: "tx",
+                    characteristicUUID: writeCharacteristic.uuid.uuidString,
+                    data: data
+                )
+            }
         }
 
         peripheral?.writeValue(data, for: writeCharacteristic, type: .withResponse)
@@ -208,6 +218,26 @@ public class BLEConnection: NSObject {
 
         peripheral?.delegate = nil
         peripheral = nil
+    }
+
+    private func characteristicLabel(_ characteristic: CBCharacteristic) -> String {
+        switch characteristic.uuid {
+        case radioWriteUUID:
+            return "write"
+        case radioIndicateUUID:
+            return "indicate"
+        case radioAuxUUID:
+            return "aux"
+        default:
+            return characteristic.uuid.uuidString
+        }
+    }
+
+    private func recordCaptureNote(category: String, message: String, fields: [String: String] = [:]) {
+        guard BLECaptureStore.isEnabled else { return }
+        Task {
+            await BLECaptureStore.shared.recordNote(category: category, message: message, fields: fields)
+        }
     }
 
     private func beginConnectFlowIfPossible() {
@@ -272,7 +302,11 @@ public class BLEConnection: NSObject {
             guard let self else { return }
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             guard self.connectContinuation != nil else { return }
+            if self.peripheral?.state == .connected || self.didReachReadyState {
+                return
+            }
             print("BLE: Connect timed out after \(seconds)s")
+            self.recordCaptureNote(category: "connect_timeout", message: "BLE connect timed out", fields: ["seconds": String(seconds)])
             if self.canIssueCentralCommands {
                 self.centralManager.stopScan()
                 if let peripheral = self.peripheral {
@@ -336,6 +370,8 @@ public class BLEConnection: NSObject {
 extension BLEConnection: CBCentralManagerDelegate {
 
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        print("BLE: central state -> \(central.state.rawValue)")
+        recordCaptureNote(category: "central_state", message: "Central state updated", fields: ["state": String(central.state.rawValue)])
         switch central.state {
         case .poweredOn:
             beginConnectFlowIfPossible()
@@ -365,12 +401,17 @@ extension BLEConnection: CBCentralManagerDelegate {
         _ central: CBCentralManager,
         willRestoreState dict: [String: Any]
     ) {
+        guard stateRestorationEnabled else { return }
         guard let peripherals = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] else {
             return
         }
 
         if let restored = peripherals.first(where: { $0.identifier == deviceUUID }) {
             print("BLE: Restored peripheral \(restored.identifier.uuidString) state=\(restored.state.rawValue)")
+            recordCaptureNote(category: "restore", message: "Restored peripheral", fields: [
+                "peripheral": restored.identifier.uuidString,
+                "state": String(restored.state.rawValue)
+            ])
             self.peripheral = restored
             restored.delegate = self
 
@@ -390,6 +431,11 @@ extension BLEConnection: CBCentralManagerDelegate {
     ) {
         guard peripheral.identifier == deviceUUID else { return }
 
+        print("BLE: discovered target peripheral \(peripheral.identifier.uuidString) rssi=\(RSSI)")
+        recordCaptureNote(category: "discover", message: "Discovered target peripheral", fields: [
+            "peripheral": peripheral.identifier.uuidString,
+            "rssi": RSSI.stringValue
+        ])
         central.stopScan()
         self.peripheral = peripheral
         peripheral.delegate = self
@@ -402,6 +448,10 @@ extension BLEConnection: CBCentralManagerDelegate {
         _ central: CBCentralManager,
         didConnect peripheral: CBPeripheral
     ) {
+        print("BLE: didConnect peripheral \(peripheral.identifier.uuidString)")
+        recordCaptureNote(category: "connect", message: "Connected peripheral", fields: ["peripheral": peripheral.identifier.uuidString])
+        connectTimeoutTask?.cancel()
+        connectTimeoutTask = nil
         startServiceDiscoveryIfPossible()
     }
 
@@ -410,6 +460,11 @@ extension BLEConnection: CBCentralManagerDelegate {
         didFailToConnect peripheral: CBPeripheral,
         error: Error?
     ) {
+        print("BLE: didFailToConnect peripheral \(peripheral.identifier.uuidString) error=\(error?.localizedDescription ?? "nil")")
+        recordCaptureNote(category: "connect_failed", message: "Failed to connect peripheral", fields: [
+            "peripheral": peripheral.identifier.uuidString,
+            "error": error?.localizedDescription ?? "nil"
+        ])
         failConnect(error ?? BLEError.connectionFailed)
         delegate?.connectionDidDisconnect(self, error: error)
     }
@@ -424,6 +479,21 @@ extension BLEConnection: CBCentralManagerDelegate {
 
         let hadConnect = connectContinuation != nil
         let hadDisconnect = disconnectContinuation != nil
+
+        print(
+            "BLE: didDisconnect peripheral \(peripheral.identifier.uuidString) " +
+            "requested=\(wasRequested) ready=\(wasReady) " +
+            "hadConnect=\(hadConnect) hadDisconnect=\(hadDisconnect) " +
+            "error=\(error?.localizedDescription ?? "nil")"
+        )
+        recordCaptureNote(category: "disconnect", message: "Peripheral disconnected", fields: [
+            "peripheral": peripheral.identifier.uuidString,
+            "requested": String(wasRequested),
+            "ready": String(wasReady),
+            "hadConnect": String(hadConnect),
+            "hadDisconnect": String(hadDisconnect),
+            "error": error?.localizedDescription ?? "nil"
+        ])
 
         if hadConnect {
             failConnect(error ?? BLEError.connectionFailed)
@@ -456,6 +526,7 @@ extension BLEConnection: CBPeripheralDelegate {
         isDiscoveringServices = false
         if let error = error {
             print("BLE: Error discovering services: \(error.localizedDescription)")
+            recordCaptureNote(category: "discover_services_error", message: "Service discovery failed", fields: ["error": error.localizedDescription])
             failConnect(error)
             return
         }
@@ -467,6 +538,11 @@ extension BLEConnection: CBPeripheralDelegate {
         }
         
         print("BLE: Discovered \(services.count) service(s) for device \(peripheral.identifier.uuidString):")
+        recordCaptureNote(category: "services", message: "Discovered services", fields: [
+            "peripheral": peripheral.identifier.uuidString,
+            "count": String(services.count),
+            "uuids": services.map(\.uuid.uuidString).joined(separator: ",")
+        ])
         for service in services {
             print("BLE:   - Service UUID: \(service.uuid.uuidString)")
         }
@@ -479,6 +555,7 @@ extension BLEConnection: CBPeripheralDelegate {
         }
 
         print("BLE: Found radio service UUID: \(radioService.uuid.uuidString), discovering characteristics...")
+        recordCaptureNote(category: "radio_service", message: "Found radio service", fields: ["uuid": radioService.uuid.uuidString])
         peripheral.discoverCharacteristics(
             [radioWriteUUID, radioIndicateUUID, radioAuxUUID],
             for: radioService
@@ -492,6 +569,10 @@ extension BLEConnection: CBPeripheralDelegate {
     ) {
         if let error {
             print("BLE: Error discovering characteristics for service \(service.uuid): \(error.localizedDescription)")
+            recordCaptureNote(category: "discover_characteristics_error", message: "Characteristic discovery failed", fields: [
+                "service": service.uuid.uuidString,
+                "error": error.localizedDescription
+            ])
             failConnect(error)
             return
         }
@@ -503,6 +584,11 @@ extension BLEConnection: CBPeripheralDelegate {
         }
         
         print("BLE: Discovered \(characteristics.count) characteristics for service \(service.uuid):")
+        recordCaptureNote(category: "characteristics", message: "Discovered characteristics", fields: [
+            "service": service.uuid.uuidString,
+            "count": String(characteristics.count),
+            "uuids": characteristics.map(\.uuid.uuidString).joined(separator: ",")
+        ])
         for char in characteristics {
             print("BLE:   - Char UUID: \(char.uuid) (Props: \(char.properties.rawValue))")
         }
@@ -553,7 +639,7 @@ extension BLEConnection: CBPeripheralDelegate {
         error: Error?
     ) {
         if let error = error {
-             print("BLE: Error updating value for char \(characteristic.uuid): \(error.localizedDescription)")
+             print("BLE: Error updating value for char \(characteristicLabel(characteristic)): \(error.localizedDescription)")
              return
         }
         
@@ -562,8 +648,14 @@ extension BLEConnection: CBPeripheralDelegate {
         // During OTA we may receive indications on more than one characteristic.
         guard characteristic.uuid == radioIndicateUUID || characteristic.uuid == radioAuxUUID else { return }
 
-        if UserDefaults.standard.bool(forKey: Self.bleCaptureDefaultsKey) {
-            Task { await BLEPacketCapture.shared.record(direction: .rx, characteristic: characteristic, data: data) }
+        if BLECaptureStore.isEnabled {
+            Task {
+                await BLECaptureStore.shared.recordPacket(
+                    direction: "rx",
+                    characteristicUUID: characteristic.uuid.uuidString,
+                    data: data
+                )
+            }
         }
         
         // print("BLE: Received data: \(data.count) bytes")
@@ -572,78 +664,44 @@ extension BLEConnection: CBPeripheralDelegate {
 
     public func peripheral(
         _ peripheral: CBPeripheral,
+        didUpdateNotificationStateFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        print(
+            "BLE: notify state for \(characteristicLabel(characteristic)) " +
+            "isNotifying=\(characteristic.isNotifying) " +
+            "error=\(error?.localizedDescription ?? "nil")"
+        )
+        recordCaptureNote(category: "notify_state", message: "Notification state updated", fields: [
+            "characteristic": characteristic.uuid.uuidString,
+            "label": characteristicLabel(characteristic),
+            "isNotifying": String(characteristic.isNotifying),
+            "error": error?.localizedDescription ?? "nil"
+        ])
+    }
+
+    public func peripheral(
+        _ peripheral: CBPeripheral,
+        didModifyServices invalidatedServices: [CBService]
+    ) {
+        let uuids = invalidatedServices.map(\.uuid.uuidString).joined(separator: ",")
+        print("BLE: services modified/invalidated -> [\(uuids)]")
+        recordCaptureNote(category: "services_modified", message: "Services modified", fields: ["uuids": uuids])
+    }
+
+    public func peripheral(
+        _ peripheral: CBPeripheral,
         didWriteValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
-        // Optional: handle write confirmation
-    }
-}
-
-// MARK: - Debug Packet Capture (JSONL)
-
-private actor BLEPacketCapture {
-    enum Direction: String {
-        case tx
-        case rx
-    }
-
-    static let shared = BLEPacketCapture()
-
-    private let maxBytes: Int = 5 * 1024 * 1024
-    private let fileName: String = "fieldht_ble_capture.jsonl"
-    private var didLogLocation: Bool = false
-
-    private func logURL() -> URL? {
-        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
-            return nil
-        }
-        return caches.appendingPathComponent(fileName, isDirectory: false)
-    }
-
-    private func rotateIfNeeded(at url: URL) {
-        let fm = FileManager.default
-        guard let attrs = try? fm.attributesOfItem(atPath: url.path),
-              let size = attrs[.size] as? NSNumber
-        else { return }
-
-        if size.intValue < maxBytes { return }
-
-        let rotated = url.deletingLastPathComponent().appendingPathComponent("\(fileName).1", isDirectory: false)
-        _ = try? fm.removeItem(at: rotated)
-        _ = try? fm.moveItem(at: url, to: rotated)
-    }
-
-    func record(direction: Direction, characteristic: CBCharacteristic?, data: Data) {
-        guard let url = logURL() else { return }
-        let fm = FileManager.default
-
-        if !didLogLocation {
-            didLogLocation = true
-            print("[BLE-CAPTURE] Writing JSONL to: \(url.path)")
-            print("[BLE-CAPTURE] Rotate at ~\(maxBytes) bytes")
-        }
-
-        if !fm.fileExists(atPath: url.path) {
-            _ = fm.createFile(atPath: url.path, contents: nil)
-        } else {
-            rotateIfNeeded(at: url)
-        }
-
-        let uuid = characteristic?.uuid.uuidString.lowercased() ?? ""
-        let ms = Int64((Date().timeIntervalSince1970 * 1000.0).rounded())
-        let hex = data.map { String(format: "%02hhx", $0) }.joined()
-
-        // JSONL for easy grepping/parsing.
-        let line = "{\"unix_ms\":\(ms),\"dir\":\"\(direction.rawValue)\",\"uuid\":\"\(uuid)\",\"len\":\(data.count),\"hex\":\"\(hex)\"}\n"
-        guard let lineData = line.data(using: .utf8) else { return }
-
-        do {
-            let handle = try FileHandle(forWritingTo: url)
-            try handle.seekToEnd()
-            try handle.write(contentsOf: lineData)
-            try handle.close()
-        } catch {
-            // Best-effort only.
-        }
+        print(
+            "BLE: didWriteValue for \(characteristicLabel(characteristic)) " +
+            "error=\(error?.localizedDescription ?? "nil")"
+        )
+        recordCaptureNote(category: "write_complete", message: "Characteristic write completed", fields: [
+            "characteristic": characteristic.uuid.uuidString,
+            "label": characteristicLabel(characteristic),
+            "error": error?.localizedDescription ?? "nil"
+        ])
     }
 }

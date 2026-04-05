@@ -34,6 +34,11 @@ public struct DiscoveredDevice: Identifiable, Equatable {
     }
 }
 
+public enum BLEScanMode {
+    case radioOnly
+    case allDevices
+}
+
 // MARK: - BLE Scanner
 @MainActor
 public final class BLEScanner: NSObject, ObservableObject {
@@ -49,6 +54,8 @@ public final class BLEScanner: NSObject, ObservableObject {
     private var devices: [UUID: DiscoveredDevice] = [:]
     private var validationCompletions: [UUID: (Bool) -> Void] = [:]
     private var validationTimeouts: [UUID: Timer] = [:]
+    private var validationConnectionsToRelease: Set<UUID> = []
+    private var scanMode: BLEScanMode = .radioOnly
     
     // UserDefaults key for storing last paired device
     private let lastPairedDeviceKey = "com.fieldHT.lastPairedDeviceUUID"
@@ -89,7 +96,7 @@ public final class BLEScanner: NSObject, ObservableObject {
     }
 
     // MARK: - Scanning
-    public func startScanning() {
+    public func startScanning(mode: BLEScanMode = .radioOnly) {
         guard centralManager.state == .poweredOn else {
             statusMessage = "Bluetooth is not powered on"
             return
@@ -98,16 +105,18 @@ public final class BLEScanner: NSObject, ObservableObject {
 
         devices.removeAll()
         discoveredDevices.removeAll()
+        scanMode = mode
 
         isScanning = true
-        statusMessage = "Scanning for devices..."
+        statusMessage = mode == .radioOnly ? "Scanning for radios..." : "Scanning for accessories..."
         
         // First, check for previously paired device
         checkForPreviouslyPairedDevice()
 
         // Then scan for new devices with the radio pairing service
+        let serviceFilter: [CBUUID]? = mode == .radioOnly ? [radioPairingUUID] : nil
         centralManager.scanForPeripherals(
-            withServices: [radioPairingUUID],
+            withServices: serviceFilter,
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
         )
     }
@@ -150,6 +159,7 @@ public final class BLEScanner: NSObject, ObservableObject {
         }
         validationTimeouts.removeAll()
         validationCompletions.removeAll()
+        validationConnectionsToRelease.removeAll()
     }
 
     // MARK: - Known device lookup
@@ -203,6 +213,7 @@ public final class BLEScanner: NSObject, ObservableObject {
 
         peripheral.delegate = self
         validationCompletions[peripheral.identifier] = completion
+        validationConnectionsToRelease.insert(peripheral.identifier)
 
         // Set a timeout for validation
         let timeout = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { [weak self] _ in
@@ -226,6 +237,7 @@ public final class BLEScanner: NSObject, ObservableObject {
     private func handleValidationTimeout(for peripheral: CBPeripheral) {
         validationTimeouts[peripheral.identifier]?.invalidate()
         validationTimeouts[peripheral.identifier] = nil
+        validationConnectionsToRelease.remove(peripheral.identifier)
         
         validationCompletions[peripheral.identifier]?(false)
         validationCompletions[peripheral.identifier] = nil
@@ -335,6 +347,7 @@ extension BLEScanner: CBCentralManagerDelegate {
         
         validationTimeouts[peripheral.identifier]?.invalidate()
         validationTimeouts[peripheral.identifier] = nil
+        validationConnectionsToRelease.remove(peripheral.identifier)
         
         validationCompletions[peripheral.identifier]?(false)
         validationCompletions[peripheral.identifier] = nil
@@ -391,12 +404,18 @@ extension BLEScanner: CBPeripheralDelegate {
         validationCompletions[peripheral.identifier]?(hasRadio)
         validationCompletions[peripheral.identifier] = nil
 
-        // Disconnect non-radio devices immediately
-        if !hasRadio {
-            statusMessage = "\(peripheral.name ?? "Device") does not have radio service"
-            centralManager.cancelPeripheralConnection(peripheral)
-        } else {
+        if hasRadio {
             statusMessage = "\(peripheral.name ?? "Device") has radio service!"
+        } else {
+            statusMessage = "\(peripheral.name ?? "Device") does not have radio service"
+        }
+
+        // Validation should always be temporary so the dedicated radio transport
+        // can establish a clean connection immediately afterward.
+        if validationConnectionsToRelease.contains(peripheral.identifier),
+           peripheral.state == .connected {
+            validationConnectionsToRelease.remove(peripheral.identifier)
+            centralManager.cancelPeripheralConnection(peripheral)
         }
     }
 

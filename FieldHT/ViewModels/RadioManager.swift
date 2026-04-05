@@ -15,9 +15,12 @@ import UserNotifications
 public class RadioManager: ObservableObject {
     // Connection State
     @Published public var radioController: RadioController?
+    @Published public var speakerMicController: SpeakerMicController?
     @Published public var isConnected: Bool = false
     @Published public var connectionError: String?
     @Published public var isConnecting: Bool = false
+    @Published public var isSpeakerMicConnecting: Bool = false
+    @Published public var speakerMicConnectionError: String?
     @Published public var isAutoReconnecting: Bool = false
     @Published public var autoReconnectEnabled: Bool {
         didSet {
@@ -45,6 +48,29 @@ public class RadioManager: ObservableObject {
     
     var channels: [Channel] { radioController?.channelsForCurrentRegion ?? [] }
     var regionNames: [String] { radioController?.regionNames ?? [] }
+    var currentStatus: Status? { radioController?.state?.status }
+    private var hasValidRadioReportedSpeakerMicBattery: Bool { (1...100).contains(hmBatteryLevel) }
+    var supportsSpeakerMicAccessory: Bool {
+        (radioController?.deviceInfo.hasHandMicrophoneSpeaker ?? false) ||
+        speakerMicController != nil ||
+        lastSpeakerMicDeviceUUID != nil ||
+        speakerMicEvidenceIsFresh ||
+        hasValidRadioReportedSpeakerMicBattery
+    }
+    var isSpeakerMicConnected: Bool {
+        (speakerMicController?.isConnected ?? false) ||
+        speakerMicEvidenceIsFresh ||
+        hasValidRadioReportedSpeakerMicBattery ||
+        (currentStatus?.isAOCConnected ?? false)
+    }
+    var isBluetoothAudioConnected: Bool { currentStatus?.isHFPConnected ?? false }
+    var speakerMicBatteryPercent: Int {
+        let directBattery = speakerMicController?.batteryPercent ?? 0
+        if (1...100).contains(directBattery) {
+            return directBattery
+        }
+        return hasValidRadioReportedSpeakerMicBattery ? hmBatteryLevel : 0
+    }
     
     // Channel IDs for special functions:
     // VFO A: 252
@@ -70,6 +96,7 @@ public class RadioManager: ObservableObject {
     @Published public var batteryLevel: Int = 0
     @Published public var hmBatteryLevel: Int = 0
     private var hasNotifiedLowBattery = false
+    private var lastSpeakerMicEvidenceAt: Date?
     
     @Published public var isBusy: Bool = false
     @Published public var errorMessage: String?
@@ -85,11 +112,13 @@ public class RadioManager: ObservableObject {
     private var connectionControllerDeviceUUID: UUID?
 
     private let lastPairedDeviceKey = "com.fieldHT.lastPairedDeviceUUID"
+    private let lastSpeakerMicDeviceKey = "com.fieldHT.lastSpeakerMicDeviceUUID"
     private let autoReconnectEnabledKey = "com.fieldHT.autoReconnectEnabled"
     private var reconnectAttempt: Int = 0
 
     private let maxAutoReconnectAttempts: Int = 6
     private let maxAutoReconnectTotalSeconds: TimeInterval = 90
+    private let speakerMicEvidenceTimeout: TimeInterval = 90
     
     public init() {
         if UserDefaults.standard.object(forKey: autoReconnectEnabledKey) == nil {
@@ -115,6 +144,23 @@ public class RadioManager: ObservableObject {
                 UserDefaults.standard.set(uuid.uuidString, forKey: lastPairedDeviceKey)
             } else {
                 UserDefaults.standard.removeObject(forKey: lastPairedDeviceKey)
+            }
+        }
+    }
+
+    public var lastSpeakerMicDeviceUUID: UUID? {
+        get {
+            guard let uuidString = UserDefaults.standard.string(forKey: lastSpeakerMicDeviceKey),
+                  let uuid = UUID(uuidString: uuidString) else {
+                return nil
+            }
+            return uuid
+        }
+        set {
+            if let uuid = newValue {
+                UserDefaults.standard.set(uuid.uuidString, forKey: lastSpeakerMicDeviceKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: lastSpeakerMicDeviceKey)
             }
         }
     }
@@ -160,7 +206,8 @@ public class RadioManager: ObservableObject {
                 self.isConnected = true
                 self.isConnecting = false
                 
-                // Start polling for battery
+                // Start polling for battery. Speaker-mic direct BLE is manual-only for now;
+                // auto-restoring that second link was causing connection churn.
                 startPolling()
             } catch {
                 if error is CancellationError {
@@ -174,6 +221,8 @@ public class RadioManager: ObservableObject {
                 self.connectionError = error.localizedDescription
                 self.isConnecting = false
                 self.radioController = nil
+                self.connectionController = nil
+                self.connectionControllerDeviceUUID = nil
                 self.cancellables.removeAll()
 
                 startAutoReconnect(to: deviceUUID)
@@ -186,6 +235,7 @@ public class RadioManager: ObservableObject {
         radio.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
+                self?.refreshSpeakerMicEvidenceFromStatus()
                 self?.objectWillChange.send()
             }
             .store(in: &cancellables)
@@ -215,13 +265,22 @@ public class RadioManager: ObservableObject {
             if let controller {
                 await controller.disconnect()
             }
+
+            if let accessory = self.speakerMicController {
+                await accessory.disconnect()
+            }
             
             await MainActor.run {
                 self.connectionController = nil
                 self.connectionControllerDeviceUUID = nil
                 self.radioController = nil
+                self.speakerMicController = nil
                 self.isConnected = false
                 self.connectionError = nil
+                self.speakerMicConnectionError = nil
+                self.isSpeakerMicConnecting = false
+                self.hmBatteryLevel = 0
+                self.lastSpeakerMicEvidenceAt = nil
             }
         }
     }
@@ -229,6 +288,15 @@ public class RadioManager: ObservableObject {
     /// Called by the BLE layer when the transport drops unexpectedly.
     /// This is intentionally lightweight and safe to call multiple times.
     public func handleTransportDidDisconnect(error: Error?) {
+        let status = currentStatus
+        print(
+            "RadioManager: transport disconnected " +
+            "error=\(error?.localizedDescription ?? "nil") " +
+            "aoc=\(status?.isAOCConnected ?? false) " +
+            "hfp=\(status?.isHFPConnected ?? false) " +
+            "tx=\(status?.isInTx ?? false) " +
+            "rx=\(status?.isInRx ?? false)"
+        )
         // Prevent an in-flight connect task from racing with the disconnect callback.
         connectionTask?.cancel()
         connectionTask = nil
@@ -236,9 +304,12 @@ public class RadioManager: ObservableObject {
         stopPolling()
         cancellables.removeAll()
 
+        connectionController = nil
+        connectionControllerDeviceUUID = nil
         radioController = nil
         isConnected = false
         isConnecting = false
+        isSpeakerMicConnecting = false
 
         if let error {
             connectionError = error.localizedDescription
@@ -319,6 +390,8 @@ public class RadioManager: ObservableObject {
                     }
 
                     self.radioController = nil
+                    self.connectionController = nil
+                    self.connectionControllerDeviceUUID = nil
                     self.isConnected = false
                     self.isConnecting = false
                     self.cancellables.removeAll()
@@ -353,6 +426,72 @@ public class RadioManager: ObservableObject {
         let jitter = Double.random(in: 0...(base * 0.2))
         return max(1.0, base + jitter)
     }
+
+    private var speakerMicEvidenceIsFresh: Bool {
+        guard let lastSpeakerMicEvidenceAt else { return false }
+        return Date().timeIntervalSince(lastSpeakerMicEvidenceAt) < speakerMicEvidenceTimeout
+    }
+
+    private func noteSpeakerMicEvidence() {
+        lastSpeakerMicEvidenceAt = Date()
+    }
+
+    private func refreshSpeakerMicEvidenceFromStatus() {
+        if currentStatus?.isAOCConnected == true {
+            noteSpeakerMicEvidence()
+        }
+
+        if !speakerMicEvidenceIsFresh && currentStatus?.isAOCConnected != true && hmBatteryLevel <= 0 {
+            objectWillChange.send()
+        }
+    }
+
+    public func connectSpeakerMic(to deviceUUID: UUID) {
+        guard !isSpeakerMicConnecting else { return }
+
+        isSpeakerMicConnecting = true
+        speakerMicConnectionError = nil
+
+        Task {
+            do {
+                if let existing = self.speakerMicController, existing.deviceUUID != deviceUUID {
+                    await existing.disconnect()
+                    self.speakerMicController = nil
+                }
+
+                let controller = self.speakerMicController ?? SpeakerMicController.newBLE(deviceUUID: deviceUUID)
+                try await controller.connect()
+
+                await MainActor.run {
+                    self.speakerMicController = controller
+                    self.lastSpeakerMicDeviceUUID = deviceUUID
+                    self.isSpeakerMicConnecting = false
+                    self.speakerMicConnectionError = nil
+                    self.noteSpeakerMicEvidence()
+                }
+            } catch {
+                await MainActor.run {
+                    self.speakerMicController = nil
+                    self.isSpeakerMicConnecting = false
+                    self.speakerMicConnectionError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    public func disconnectSpeakerMic() {
+        Task {
+            if let controller = self.speakerMicController {
+                await controller.disconnect()
+            }
+
+            await MainActor.run {
+                self.speakerMicController = nil
+                self.isSpeakerMicConnecting = false
+                self.speakerMicConnectionError = nil
+            }
+        }
+    }
     
     // MARK: - Polling
     
@@ -381,13 +520,19 @@ public class RadioManager: ObservableObject {
         self.batteryVoltage = volts
         self.batteryLevel = level
 
-        // Read HM speaker-mic battery when the accessory is attached
-        if controller.deviceInfo.hasHandMicrophoneSpeaker {
-            if let hmLevel = try? await controller.rcBatteryLevel() {
+        if currentStatus?.isAOCConnected == true {
+            noteSpeakerMicEvidence()
+        }
+
+        // The live AOC status bit appears noisy on some radios, so keep trying the
+        // accessory battery read while we have recent evidence the speaker mic exists.
+        if supportsSpeakerMicAccessory || speakerMicEvidenceIsFresh || hasValidRadioReportedSpeakerMicBattery {
+            if let hmLevel = try? await controller.rcBatteryLevel(), (1...100).contains(hmLevel) {
                 self.hmBatteryLevel = hmLevel
+                noteSpeakerMicEvidence()
+            } else if !speakerMicEvidenceIsFresh && currentStatus?.isAOCConnected != true {
+                self.hmBatteryLevel = 0
             }
-        } else {
-            self.hmBatteryLevel = 0
         }
 
         // Fire a low-battery notification once when crossing below 10%.
@@ -396,31 +541,48 @@ public class RadioManager: ObservableObject {
             hasNotifiedLowBattery = false
         } else if level <= 10 && level > 0 && !hasNotifiedLowBattery {
             hasNotifiedLowBattery = true
-            try? await UNUserNotificationCenter.current().add(lowBatteryNotificationRequest(level: level))
+            print("RadioManager: low battery threshold reached at \(level)%")
+            NotificationManager.shared.scheduleLowBatteryNotification(level: level)
         }
-    }
-
-    private func lowBatteryNotificationRequest(level: Int) -> UNNotificationRequest {
-        let content = UNMutableNotificationContent()
-        content.title = "Radio Battery Low"
-        content.body = "Battery is at \(level)%. Enable Low Power Mode to extend usage."
-        content.sound = .default
-        content.categoryIdentifier = NotificationManager.lowBatteryCategoryID
-        return UNNotificationRequest(identifier: "com.fieldHT.lowBattery", content: content, trigger: nil)
     }
 
     /// Enable low power (power saving) mode on the radio.
     public func enableLowPowerMode() {
-        guard let controller = radioController, var settings = controller.state?.settings else { return }
-        settings.powerSavingMode = true
+        guard let controller = radioController else {
+            print("RadioManager: enableLowPowerMode ignored because radio is not connected")
+            errorMessage = "Radio is not connected."
+            return
+        }
+        print("RadioManager: enabling low power mode")
         isBusy = true
         Task {
             do {
+                guard var settings = controller.state?.settings else {
+                    throw NSError(
+                        domain: "FieldHT.RadioManager",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Radio settings are unavailable."]
+                    )
+                }
+                if settings.powerSavingMode {
+                    print("RadioManager: low power mode already enabled")
+                    await MainActor.run {
+                        self.isBusy = false
+                    }
+                    return
+                }
+                settings.powerSavingMode = true
                 try await controller.setSettings(settings)
-                isBusy = false
+                print("RadioManager: low power mode enabled successfully")
+                await MainActor.run {
+                    self.isBusy = false
+                }
             } catch {
-                errorMessage = "Failed to enable low power mode: \(error.localizedDescription)"
-                isBusy = false
+                print("RadioManager: failed to enable low power mode: \(error.localizedDescription)")
+                await MainActor.run {
+                    self.errorMessage = "Failed to enable low power mode: \(error.localizedDescription)"
+                    self.isBusy = false
+                }
             }
         }
     }

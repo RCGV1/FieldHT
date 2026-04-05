@@ -13,10 +13,6 @@ struct SettingsView: View {
     
     @State private var isHydrating = false
 
-    private var isSyncDisabled: Bool {
-        !radioManager.isConnected || isHydrating || viewModel.isSaving || viewModel.isLoading
-    }
-    
     var body: some View {
         ZStack {
             Group {
@@ -48,12 +44,23 @@ struct SettingsView: View {
                                 } label: {
                                     Label("APRS / Packet Beaconing", systemImage: "location.fill")
                                 }
+
+                                if radioManager.supportsSpeakerMicAccessory || radioManager.isBluetoothAudioConnected || radioManager.speakerMicController != nil || radioManager.lastSpeakerMicDeviceUUID != nil {
+                                    NavigationLink {
+                                        SpeakerMicView(viewModel: viewModel)
+                                            .environmentObject(radioManager)
+                                    } label: {
+                                        Label("Speaker Mic & BT Audio", systemImage: "mic.badge.plus")
+                                    }
+                                }
                             } else {
                                 Label("Channels & Memory Groups", systemImage: "list.number")
                                     .foregroundColor(.secondary)
                                 Label("Programmable Buttons", systemImage: "button.programmable")
                                     .foregroundColor(.secondary)
                                 Label("APRS / Packet Beaconing", systemImage: "location.fill")
+                                    .foregroundColor(.secondary)
+                                Label("Speaker Mic & BT Audio", systemImage: "mic.badge.plus")
                                     .foregroundColor(.secondary)
                             }
                         } header: {
@@ -94,19 +101,6 @@ struct SettingsView: View {
 
                             Picker(
                                 selection: Binding(
-                                    get: { viewModel.settings?.btMicGain ?? 0 },
-                                    set: { viewModel.updateBtMicGain($0) }
-                                )
-                            ) {
-                                ForEach(0..<5) { i in
-                                    Text("\(i)").tag(i)
-                                }
-                            } label: {
-                                Label("BT Mic Gain", systemImage: "mic.and.signal.meter")
-                            }
-
-                            Picker(
-                                selection: Binding(
                                     get: { viewModel.settings?.localSpeaker ?? 0 },
                                     set: { viewModel.updateLocalSpeaker($0) }
                                 )
@@ -118,42 +112,12 @@ struct SettingsView: View {
                                 Label("Local Speaker", systemImage: "speaker")
                             }
 
-                            Picker(
-                                selection: Binding(
-                                    get: { viewModel.settings?.hmSpeaker ?? 0 },
-                                    set: { viewModel.updateHmSpeaker($0) }
-                                )
-                            ) {
-                                Text("Off").tag(0)
-                                Text("On").tag(1)
-                            } label: {
-                                Label("HM Speaker", systemImage: "speaker.wave.3")
-                            }
-
-                            Picker(
-                                selection: Binding(
-                                    get: { viewModel.settings?.aghfpCallMode ?? 0 },
-                                    set: { viewModel.updateAghfpCallMode($0) }
-                                )
-                            ) {
-                                Text("Auto").tag(0)
-                                Text("Manual").tag(1)
-                            } label: {
-                                Label("AGHFP Call Mode", systemImage: "phone")
-                            }
-
-                            if radioManager.radioController?.deviceInfo.hasHandMicrophoneSpeaker == true,
-                               radioManager.hmBatteryLevel > 0 {
-                                HStack {
-                                    Label("HM Mic Battery", systemImage: "mic.fill")
-                                    Spacer()
-                                    Text("\(radioManager.hmBatteryLevel)%")
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-
                         } header: {
                             Label("Audio", systemImage: "speaker.wave.2")
+                        } footer: {
+                            if radioManager.supportsSpeakerMicAccessory || radioManager.isBluetoothAudioConnected || radioManager.speakerMicController != nil || radioManager.lastSpeakerMicDeviceUUID != nil {
+                                Text("Speaker-mic routing, battery, and Bluetooth audio controls are in Speaker Mic & BT Audio.")
+                            }
                         }
 
                         if radioManager.radioController?.deviceInfo.supportsNOAA == true {
@@ -473,10 +437,6 @@ struct SettingsView: View {
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
 
-                        Button("Force Reload") {
-                            viewModel.retryLoad()
-                        }
-                        .padding(.top)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -512,15 +472,6 @@ struct SettingsView: View {
                 if viewModel.isSaving {
                     ProgressView()
                 }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    Task { await hydrateRadio() }
-                } label: {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                }
-                .disabled(isSyncDisabled)
-                .accessibilityLabel("Sync")
             }
         }
         .onChange(of: radioManager.isConnected) { _, isConnected in

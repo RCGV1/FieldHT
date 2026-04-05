@@ -18,6 +18,7 @@ public class SettingsViewModel: ObservableObject {
 
     // PF (Programmable Function) settings
     @Published public var pfConfig: PFConfig?
+    @Published public var supportedPFActions: [PFEffectType] = PFEffectType.knownCases
     @Published public var isPFLoading: Bool = false
     @Published public var pfErrorMessage: String?
     @Published public var isPFSaving: Bool = false
@@ -75,6 +76,7 @@ public class SettingsViewModel: ObservableObject {
         } else {
             settings = nil
             pfConfig = nil
+            supportedPFActions = PFEffectType.knownCases
             print("SettingsViewModel: Controller is nil, settings cleared")
         }
     }
@@ -155,6 +157,11 @@ public class SettingsViewModel: ObservableObject {
     public func updateSettings(_ newSettings: Settings) {
         guard let radioController = radioController else {
             return // Not connected
+        }
+
+        guard settings != newSettings else {
+            print("SettingsViewModel: Skipping no-op settings save")
+            return
         }
         
         // Optimistic update
@@ -436,10 +443,14 @@ public class SettingsViewModel: ObservableObject {
         
         pfLoadTask = Task {
             do {
-                let config = try await radioController.getPF()
+                async let configTask = radioController.getPF()
+                async let actionsTask = loadSupportedPFActions(from: radioController)
+                let config = try await configTask
+                let supportedActions = try await actionsTask
                  
                 await MainActor.run {
                     self.pfConfig = config
+                    self.supportedPFActions = supportedActions
                     self.isPFLoading = false
                     self.pfErrorMessage = nil
                     self.pfNoticeMessage = nil
@@ -457,6 +468,14 @@ public class SettingsViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    private func loadSupportedPFActions(from radioController: RadioController) async throws -> [PFEffectType] {
+        let payload = try await radioController.getPFActionsRaw()
+        let reported = payload.map { PFEffectType(rawValue: Int($0)) }
+        let merged = Array(Set(reported + PFEffectType.knownCases)).sorted { $0.rawValue < $1.rawValue }
+        print("[PF] Supported actions from radio: \(merged.map { "\($0.displayName) [\($0.rawValue)]" }.joined(separator: ", "))")
+        return merged
     }
     
     /// Update a specific PF button configuration
@@ -815,32 +834,7 @@ public class SettingsViewModel: ObservableObject {
     }
 
     private func effectName(_ effect: PFEffectType) -> String {
-        switch effect {
-        case .disable: return "Disable"
-        case .alarm: return "Alarm"
-        case .alarmAndMute: return "Alarm+Mute"
-        case .toggleOffline: return "Standby"
-        case .toggleRadioTx: return "Radio TX"
-        case .toggleTxPower: return "TX Power"
-        case .toggleFM: return "FM"
-        case .prevChannel: return "Prev Ch"
-        case .nextChannel: return "Next Ch"
-        case .tCall: return "T-Call"
-        case .prevRegion: return "Prev Region"
-        case .nextRegion: return "Next Region"
-        case .toggleChScan: return "Ch Scan"
-        case .mainPTT: return "Main PTT"
-        case .subPTT: return "Sub PTT"
-        case .toggleMonitor: return "Monitor"
-        case .btPairing: return "BT Pair"
-        case .toggleDoubleCh: return "Double Ch"
-        case .toggleABCh: return "A/B"
-        case .sendLocation: return "Send Loc"
-        case .oneClickLink: return "One Click"
-        case .volDown: return "Vol-"
-        case .volUp: return "Vol+"
-        case .toggleMute: return "Mute"
-        }
+        effect.shortName
     }
 
     private func triggerName(_ action: PFActionType) -> String {

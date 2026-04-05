@@ -76,7 +76,7 @@ enum AIImportError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notAvailable:
-            return "This file needs Apple Intelligence for document parsing on this device"
+            return "This file needs Apple Intelligence for the remaining parsing work on this device. Make sure Apple Intelligence is turned on in Settings and that its models have finished downloading."
         case .cannotReadFile:
             return "Unable to read the selected file"
         case .noChannelsFound:
@@ -108,6 +108,17 @@ enum AIChannelImporter {
                 return structuredChannels
             }
             print("[ChannelImport] Structured PDF parser returned no channels; falling back to model parsing")
+        }
+
+        statusUpdate("Reading file\u{2026}")
+        if let deterministicChannels = try parseDeterministicChannels(from: url), !deterministicChannels.isEmpty {
+            print("[ChannelImport] Deterministic parser produced \(deterministicChannels.count) channel(s)")
+            for (index, channel) in deterministicChannels.enumerated() {
+                let txTone = channel.txSubAudio?.frequencyValue ?? 0
+                let rxTone = channel.rxSubAudio?.frequencyValue ?? 0
+                print("[ChannelImport][Deterministic][\(index)] name=\(channel.name) rx=\(channel.rxFreq) tx=\(channel.txFreq) txTone=\(txTone) rxTone=\(rxTone)")
+            }
+            return deterministicChannels
         }
 
         guard SystemLanguageModel.default.isAvailable else {
@@ -176,7 +187,7 @@ enum AIChannelImporter {
         statusUpdate("Extracting tones\u{2026}")
 
         let channelList = parsedFreqs.enumerated()
-            .map { i, ch in "\(i). \(ch.name) — RX \(String(format: "%.3f", ch.rxFreqMHz)) MHz" }
+            .map { i, ch in "\(i). \(ch.name) — RX \(String(format: "%.3f", ch.rxFreqMHz)) MHz / TX \(String(format: "%.3f", ch.txFreqMHz)) MHz" }
             .joined(separator: "\n")
 
         let toneSession = LanguageModelSession(
@@ -201,7 +212,7 @@ enum AIChannelImporter {
                 statusUpdate: statusUpdate
             ) { text in
                 """
-                Find the CTCSS/PL tone for each channel below. Match each channel by its RX frequency.
+                Find the CTCSS/PL tone for each channel below. Match each channel by both its RX and TX frequency to identify the correct row.
                 Return exactly \(parsedFreqs.count) entries in the same order as the channel list.
                 Use 0.0 for any channel with no tone (CSQ / carrier squelch).
 
@@ -352,12 +363,14 @@ enum AIChannelImporter {
         guard let document = PDFDocument(url: url) else { throw AIImportError.cannotReadFile }
 
         let selectionText = (0..<document.pageCount)
-            .compactMap { document.page(at: $0)?.selection(for: document.page(at: $0)?.bounds(for: .mediaBox) ?? .zero)?.string }
+            .compactMap { document.page(at: $0)?.string }
             .joined(separator: "\n")
 
         guard selectionText.localizedCaseInsensitiveContains("ICS 205"),
-              selectionText.contains("RX Freq"),
-              selectionText.contains("TX Freq") else {
+              selectionText.localizedCaseInsensitiveContains("RX Freq") ||
+              selectionText.localizedCaseInsensitiveContains("Receive Freq"),
+              selectionText.localizedCaseInsensitiveContains("TX Freq") ||
+              selectionText.localizedCaseInsensitiveContains("Transmit Freq") else {
             return nil
         }
 
@@ -367,11 +380,11 @@ enum AIChannelImporter {
             .filter { !$0.isEmpty }
 
         let blockStartRegex = try NSRegularExpression(
-            pattern: #"^(\d+)\s+[A-Z][A-Z/\-]*(?:\s+.+)?$"#,
-            options: [.caseInsensitive]
+            pattern: #"^(\d+)\s+[A-Za-z][A-Za-z0-9/\-]*(?:\s+.+)?$"#,
+            options: []
         )
         let blockParseRegex = try NSRegularExpression(
-            pattern: #"^(\d+)\s+([A-Z][A-Z/\-]*)\s+(.+?)\s+(N/A|\d{3}\.\d{4,5})\s+(?:([NW])\s+)?(CSQ|N/A|\d{2,3}\.\d)\s+(N/A|\d{3}\.\d{4,5})\s+(?:([NW])\s+)?(CSQ|N/A|\d{2,3}\.\d)\s+([ADM])(?:\s+(.*))?$"#,
+            pattern: #"^(\d+)\s+([A-Z][A-Z/\-]*)\s+(.+?)\s+(N/A|\d{2,3}\.\d{1,5})\s+(?:([NW])\s+)?(CSQ|N/A|\d{2,3}\.\d{1,2})\s+(N/A|\d{2,3}\.\d{1,5})\s+(?:([NW])\s+)?(CSQ|N/A|\d{2,3}\.\d{1,2})\s+([ADM])(?:\s+(.*))?$"#,
             options: [.caseInsensitive]
         )
 
@@ -452,24 +465,280 @@ enum AIChannelImporter {
         return parsedChannels.isEmpty ? nil : parsedChannels
     }
 
-    private static func extractICS205Name(from rawSegment: String, fallbackChannelNumber: Int) -> String {
-        let assignmentMarkers = ["HAM TEAM", "FORT ORD", "CARMEL VLY", "SKI / HAM", "& TALK IN", "Automatic Packet", "Reporting System"]
-        var candidate = rawSegment
-        for marker in assignmentMarkers {
-            if let range = candidate.range(of: marker) {
-                candidate = String(candidate[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+    // MARK: - Deterministic Delimited/Text Parsing
+
+    private struct DelimitedHeaderMapping {
+        let delimiter: Character
+        let headerRowIndex: Int
+        let nameColumn: Int?
+        let rxColumn: Int
+        let txColumn: Int?
+        let offsetColumn: Int?
+        let txToneColumn: Int?
+        let rxToneColumn: Int?
+        let sharedToneColumn: Int?
+        let modeColumn: Int?
+        let bandwidthColumn: Int?
+    }
+
+    private static func parseDeterministicChannels(from url: URL) throws -> [Channel]? {
+        switch url.pathExtension.lowercased() {
+        case "csv", "tsv", "txt":
+            let text = try readPlainText(from: url)
+            return parseDelimitedChannels(from: text)
+        default:
+            return nil
+        }
+    }
+
+    private static func parseDelimitedChannels(from text: String) -> [Channel]? {
+        let rawLines = text.components(separatedBy: .newlines)
+        let lines = rawLines
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard let mapping = detectDelimitedHeader(in: lines) else {
+            return nil
+        }
+
+        var channels: [Channel] = []
+        for line in lines.dropFirst(mapping.headerRowIndex + 1) {
+            let cells = splitDelimited(line, delimiter: mapping.delimiter)
+            if cells.count <= mapping.rxColumn {
+                continue
+            }
+
+            let rxText = value(at: mapping.rxColumn, in: cells)
+            guard let rxFreq = parseFrequency(rxText), (50...1300).contains(rxFreq) else {
+                continue
+            }
+
+            let txText = value(at: mapping.txColumn, in: cells)
+            let offsetText = value(at: mapping.offsetColumn, in: cells)
+            let txDisable = mapping.txColumn != nil && (isBlankLike(txText) || txText.uppercased() == "N/A")
+            let txFreq = txDisable ? rxFreq : resolveTxFrequency(rxFreq: rxFreq, txText: txText, offsetText: offsetText)
+
+            let sharedTone = parseTone(value(at: mapping.sharedToneColumn, in: cells))
+            let txTone = parseTone(value(at: mapping.txToneColumn, in: cells))
+            let rxTone = parseTone(value(at: mapping.rxToneColumn, in: cells))
+
+            let effectiveTxTone = txTone > 0 ? txTone : sharedTone
+            let effectiveRxTone = rxTone > 0 ? rxTone : (sharedTone > 0 ? sharedTone : txTone)
+            let mode = parseMode(value(at: mapping.modeColumn, in: cells))
+            let bandwidth = parseBandwidth(value(at: mapping.bandwidthColumn, in: cells))
+            let name = parseDelimitedName(
+                explicitName: value(at: mapping.nameColumn, in: cells),
+                rowCells: cells,
+                excluding: [mapping.rxColumn, mapping.txColumn, mapping.offsetColumn, mapping.txToneColumn, mapping.rxToneColumn, mapping.sharedToneColumn, mapping.modeColumn, mapping.bandwidthColumn]
+                    .compactMap { $0 }
+            )
+
+            channels.append(Channel(
+                channelID: channels.count,
+                txMod: mode,
+                txFreq: txFreq.rounded3,
+                rxMod: mode,
+                rxFreq: rxFreq.rounded3,
+                txSubAudio: effectiveTxTone > 0 ? .frequency(effectiveTxTone) : nil,
+                rxSubAudio: effectiveRxTone > 0 ? .frequency(effectiveRxTone) : nil,
+                scan: true,
+                txAtMaxPower: true,
+                talkAround: false,
+                bandwidth: bandwidth,
+                preDeEmphBypass: false,
+                sign: false,
+                txAtMedPower: false,
+                txDisable: txDisable,
+                fixedFreq: false,
+                fixedBandwidth: false,
+                fixedTxPower: false,
+                mute: false,
+                name: String(name.prefix(10))
+            ))
+        }
+
+        return channels.isEmpty ? nil : channels
+    }
+
+    private static func detectDelimitedHeader(in lines: [String]) -> DelimitedHeaderMapping? {
+        let delimiters: [Character] = [",", "\t", ";", "|"]
+        var best: (score: Int, mapping: DelimitedHeaderMapping)?
+
+        for (rowIndex, line) in lines.prefix(12).enumerated() {
+            for delimiter in delimiters {
+                let cells = splitDelimited(line, delimiter: delimiter)
+                guard cells.count >= 2 else { continue }
+                let normalized = cells.map(normalizeHeaderLabel)
+
+                let rxColumn = indexMatching(in: normalized, keywords: ["rxfreq", "receivefreq", "rxfrequency", "outputfreq"])
+                    ?? indexMatching(in: normalized, keywords: ["rx"])
+                    ?? indexMatching(in: normalized, keywords: ["frequency", "freq"])
+
+                guard let rxColumn else { continue }
+
+                let txColumn = indexMatching(in: normalized, keywords: ["txfreq", "transmitfreq", "txfrequency", "inputfreq"])
+                    ?? indexMatching(in: normalized, keywords: ["tx", "transmit"])
+                let offsetColumn = indexMatching(in: normalized, keywords: ["offset", "duplexoffset", "shift"])
+                let nameColumn = indexMatching(in: normalized, keywords: ["channelname", "chname", "name", "label", "alias"])
+                    ?? indexMatching(in: normalized, keywords: ["channel", "ch", "memory"])
+                let txToneColumn = indexMatching(in: normalized, keywords: ["txtone", "pltx", "ctcsstx", "encodetone", "toneencode"])
+                let rxToneColumn = indexMatching(in: normalized, keywords: ["rxtone", "plrx", "ctcssrx", "decodetone", "tonedecode"])
+                let sharedToneColumn = indexMatching(in: normalized, keywords: ["tone", "ctcss", "pl"])
+                let modeColumn = indexMatching(in: normalized, keywords: ["mode", "modulation"])
+                let bandwidthColumn = indexMatching(in: normalized, keywords: ["bandwidth", "band", "bw", "width"])
+
+                var score = 0
+                score += 2
+                if txColumn != nil || offsetColumn != nil { score += 2 }
+                if nameColumn != nil { score += 2 }
+                if txToneColumn != nil || rxToneColumn != nil || sharedToneColumn != nil { score += 1 }
+                if modeColumn != nil { score += 1 }
+                if bandwidthColumn != nil { score += 1 }
+
+                let mapping = DelimitedHeaderMapping(
+                    delimiter: delimiter,
+                    headerRowIndex: rowIndex,
+                    nameColumn: nameColumn,
+                    rxColumn: rxColumn,
+                    txColumn: txColumn,
+                    offsetColumn: offsetColumn,
+                    txToneColumn: txToneColumn,
+                    rxToneColumn: rxToneColumn,
+                    sharedToneColumn: sharedToneColumn,
+                    modeColumn: modeColumn,
+                    bandwidthColumn: bandwidthColumn
+                )
+
+                if best == nil || score > best!.score {
+                    best = (score, mapping)
+                }
             }
         }
 
-        let tokens = candidate
+        guard let best, best.score >= 4 else { return nil }
+        return best.mapping
+    }
+
+    private static func splitDelimited(_ line: String, delimiter: Character) -> [String] {
+        var cells: [String] = []
+        var current = ""
+        var inQuotes = false
+
+        for character in line {
+            if character == "\"" {
+                inQuotes.toggle()
+                continue
+            }
+            if character == delimiter && !inQuotes {
+                cells.append(current.trimmingCharacters(in: .whitespacesAndNewlines))
+                current = ""
+            } else {
+                current.append(character)
+            }
+        }
+
+        cells.append(current.trimmingCharacters(in: .whitespacesAndNewlines))
+        return cells
+    }
+
+    private static func normalizeHeaderLabel(_ text: String) -> String {
+        text
+            .lowercased()
+            .replacingOccurrences(of: #"[^a-z0-9]+"#, with: "", options: .regularExpression)
+    }
+
+    private static func indexMatching(in headers: [String], keywords: [String]) -> Int? {
+        headers.firstIndex { header in
+            keywords.contains { header.contains($0) }
+        }
+    }
+
+    private static func value(at index: Int?, in cells: [String]) -> String {
+        guard let index, cells.indices.contains(index) else { return "" }
+        return cells[index].trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func parseFrequency(_ text: String) -> Double? {
+        let cleaned = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "MHz", with: "", options: .caseInsensitive)
+        return Double(cleaned)
+    }
+
+    private static func resolveTxFrequency(rxFreq: Double, txText: String, offsetText: String) -> Double {
+        if let txFreq = parseFrequency(txText), (50...1300).contains(txFreq), abs(txFreq - rxFreq) <= 26 {
+            return txFreq
+        }
+        if let offset = parseSignedOffset(offsetText) {
+            return (rxFreq + offset).rounded3
+        }
+        return inferTxFreq(fromRx: rxFreq)
+    }
+
+    private static func parseSignedOffset(_ text: String) -> Double? {
+        let cleaned = text
+            .replacingOccurrences(of: "MHz", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: " ", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cleaned.contains("+") || cleaned.contains("-") else { return nil }
+        return Double(cleaned)
+    }
+
+    private static func parseMode(_ text: String) -> ModulationType {
+        let normalized = text.uppercased()
+        if normalized.contains("DMR") || normalized == "D" {
+            return .dmr
+        }
+        if normalized.contains("AM") {
+            return .am
+        }
+        return .fm
+    }
+
+    private static func parseBandwidth(_ text: String) -> BandwidthType {
+        let normalized = text.uppercased()
+        if normalized.contains("NARROW") || normalized == "N" || normalized.contains("12.5") {
+            return .narrow
+        }
+        return .wide
+    }
+
+    private static func parseDelimitedName(explicitName: String, rowCells: [String], excluding excludedIndexes: [Int]) -> String {
+        let trimmedExplicit = explicitName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedExplicit.isEmpty, !isNumericish(trimmedExplicit) {
+            return trimmedExplicit
+        }
+
+        let excluded = Set(excludedIndexes)
+        let candidate = rowCells.enumerated()
+            .filter { !excluded.contains($0.offset) }
+            .map(\.element)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { cell in
+                !cell.isEmpty && !isNumericish(cell) && normalizeHeaderLabel(cell) != "n" && normalizeHeaderLabel(cell) != "w"
+            }
+
+        return candidate ?? "CHANNEL"
+    }
+
+    private static func isNumericish(_ text: String) -> Bool {
+        let normalized = text.replacingOccurrences(of: #"[\s,]+"#, with: "", options: .regularExpression)
+        return Double(normalized) != nil
+    }
+
+    private static func isBlankLike(_ text: String) -> Bool {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        return normalized.isEmpty || normalized == "N/A" || normalized == "NA" || normalized == "-"
+    }
+
+    private static func extractICS205Name(from rawSegment: String, fallbackChannelNumber: Int) -> String {
+        // The raw segment is typically "CALLSIGN  Assignment Description..."
+        // Take only the first whitespace-delimited token (callsign or short name).
+        let tokens = rawSegment
             .split(whereSeparator: \.isWhitespace)
             .map(String.init)
             .filter { !$0.isEmpty }
-
-        if let first = tokens.first {
-            return first
-        }
-        return "CH\(fallbackChannelNumber)"
+        return tokens.first ?? "CH\(fallbackChannelNumber)"
     }
 
     private static func parseTone(_ text: String) -> Double {

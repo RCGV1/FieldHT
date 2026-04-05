@@ -12,7 +12,7 @@ import TipKit
 @main
 struct FieldHTApp: App {
     @StateObject private var radioManager = RadioManager()
-    private let notificationManager = NotificationManager()
+    private let notificationManager = NotificationManager.shared
 
     init() {
         UNUserNotificationCenter.current().delegate = notificationManager
@@ -25,6 +25,7 @@ struct FieldHTApp: App {
                 .onAppear {
                     notificationManager.radioManager = radioManager
                     notificationManager.requestPermission()
+                    notificationManager.performPendingActionsIfNeeded()
                     RadioIntentBridge.shared.manager = radioManager
                 }
                 .task {

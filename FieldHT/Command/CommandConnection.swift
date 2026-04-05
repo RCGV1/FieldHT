@@ -21,6 +21,36 @@ public class CommandConnection: BLEConnectionDelegate {
             return "extended(\(command))"
         }
     }
+
+    private func hexString(_ data: Data) -> String {
+        data.map { String(format: "%02hhx", $0) }.joined()
+    }
+
+    private func logUnknownPacket(prefix: String, message: ProtocolMessage) {
+        let label = commandLabel(commandGroup: message.commandGroup, command: message.command)
+        print("\(prefix) label=\(label) reply=\(message.isReply) body=\(hexString(message.body))")
+        guard BLECaptureStore.isEnabled else { return }
+        Task {
+            await BLECaptureStore.shared.recordNote(category: "unknown_packet", message: prefix, fields: [
+                "label": label,
+                "reply": String(message.isReply),
+                "body": hexString(message.body)
+            ])
+        }
+    }
+
+    private func logDecodedOpaqueReply(message: ProtocolMessage, description: String, fields: [String: String]) {
+        let label = commandLabel(commandGroup: message.commandGroup, command: message.command)
+        print("[BLE-ACK] label=\(label) \(description)")
+        guard BLECaptureStore.isEnabled else { return }
+        Task {
+            await BLECaptureStore.shared.recordNote(category: "decoded_ack", message: description, fields: fields.merging([
+                "label": label,
+                "reply": String(message.isReply),
+                "body": hexString(message.body)
+            ]) { current, _ in current })
+        }
+    }
     
     /// Connection state - true when fully connected and ready to communicate
     public var isConnected: Bool {
@@ -36,8 +66,16 @@ public class CommandConnection: BLEConnectionDelegate {
     
     /// Create a new BLE command connection
     /// - Note: Connection is created but not yet connected. Call connect(to:) to establish connection.
-    public static func newBLE(deviceUUID: UUID,radioManager:RadioManager) -> CommandConnection {
-        let ble = BLEConnection(deviceUUID: deviceUUID,radioManager: radioManager)
+    public static func newBLE(
+        deviceUUID: UUID,
+        radioManager: RadioManager? = nil,
+        enableStateRestoration: Bool = true
+    ) -> CommandConnection {
+        let ble = BLEConnection(
+            deviceUUID: deviceUUID,
+            radioManager: radioManager,
+            enableStateRestoration: enableStateRestoration
+        )
         return CommandConnection(bleConnection: ble)
     }
     
@@ -105,49 +143,76 @@ public class CommandConnection: BLEConnectionDelegate {
     }
     
     public func connection(_ connection: BLEConnection, didReceiveData data: Data) {
-        let hex = data.map { String(format: "%02hhx", $0) }.joined()
+        let hex = hexString(data)
         print("[BLE-RX] Raw (\(data.count) bytes): \(hex)")
-        
-        queue.async {
-            do {
-                let message = try ProtocolDecoder.decodeMessage(data)
-                let label = self.commandLabel(commandGroup: message.commandGroup, command: message.command)
-                print("[BLE-RX] Decoded -> Reply: \(message.isReply), \(label), Body: \(message.body.map { String(format: "%02hhx", $0) }.joined())")
-                
-                // Handle replies
-                if message.isReply {
-                    if let continuation = self.pendingReplies[message.command] {
-                        self.pendingReplies.removeValue(forKey: message.command)
 
-                        let reply = try self.decodeReply(message: message)
-                        continuation.resume(returning: .reply(reply))
-                    } else {
-                        let isQuietBasicReply = (message.commandGroup == .basic) && (
-                            message.command == BasicCommand.freqModeSetPar.rawValue ||
-                            message.command == BasicCommand.freqModeGetStatus.rawValue ||
-                            message.command == BasicCommand.satModeSetInfo.rawValue ||
-                            message.command == BasicCommand.writeBSSSettings.rawValue ||
-                            message.command == BasicCommand.setVolume.rawValue
-                        )
-                        if !isQuietBasicReply {
-                            print("[BLE-RX] Unhandled reply: Grp=\(message.commandGroup) Cmd=\(message.command)")
-                        }
-                    }
+        queue.async {
+            self.handleReceivedData(data, hex: hex)
+        }
+    }
+
+    private func handleReceivedData(_ data: Data, hex: String) {
+        do {
+            let message = try ProtocolDecoder.decodeMessage(data)
+            let label = commandLabel(commandGroup: message.commandGroup, command: message.command)
+            print("[BLE-RX] Decoded -> Reply: \(message.isReply), \(label), Body: \(message.body.map { String(format: "%02hhx", $0) }.joined())")
+            if BLECaptureStore.isEnabled {
+                Task {
+                    await BLECaptureStore.shared.recordNote(category: "protocol_message", message: "Decoded protocol message", fields: [
+                        "label": label,
+                        "reply": String(message.isReply),
+                        "body": self.hexString(message.body)
+                    ])
+                }
+            }
+
+            if message.isReply {
+                if let continuation = pendingReplies[message.command] {
+                    pendingReplies.removeValue(forKey: message.command)
+
+                    let reply = try decodeReply(message: message)
+                    continuation.resume(returning: .reply(reply))
                 } else {
-                    // Handle events
-                    if message.commandGroup == .basic && message.command == BasicCommand.eventNotification.rawValue {
-                        print("[EVENT] Received event notification, body: \(message.body.map { String(format: "%02hhx", $0) }.joined())")
-                        let event = try self.decodeEvent(message: message)
-                        print("[EVENT] Decoded event: \(event)")
-                        for handler in self.eventHandlers.values {
-                            handler(event)
-                        }
-                    } else {
-                        print("[BLE-RX] Unhandled non-reply message: Grp=\(message.commandGroup) Cmd=\(message.command)")
+                    if case .registerNotificationAck(let code) = try decodeReply(message: message) {
+                        logDecodedOpaqueReply(
+                            message: message,
+                            description: "registerNotification ack code=\(code)",
+                            fields: ["code": String(code)]
+                        )
+                        return
+                    }
+                    let isQuietBasicReply = (message.commandGroup == .basic) && (
+                        message.command == BasicCommand.freqModeSetPar.rawValue ||
+                        message.command == BasicCommand.freqModeGetStatus.rawValue ||
+                        message.command == BasicCommand.satModeSetInfo.rawValue ||
+                        message.command == BasicCommand.writeBSSSettings.rawValue ||
+                        message.command == BasicCommand.setVolume.rawValue
+                    )
+                    if !isQuietBasicReply {
+                        logUnknownPacket(prefix: "[BLE-UNKNOWN-REPLY]", message: message)
                     }
                 }
-            } catch {
-                print("Error decoding message: \(error)")
+            } else if message.commandGroup == .basic && message.command == BasicCommand.eventNotification.rawValue {
+                print("[EVENT] Received event notification, body: \(message.body.map { String(format: "%02hhx", $0) }.joined())")
+                let event = try decodeEvent(message: message)
+                print("[EVENT] Decoded event: \(event)")
+                for handler in eventHandlers.values {
+                    handler(event)
+                }
+            } else {
+                logUnknownPacket(prefix: "[BLE-UNKNOWN-MESSAGE]", message: message)
+            }
+        } catch {
+            let header = data.prefix(4)
+            print("[BLE-DECODE-ERR] error=\(error) raw=\(hex) header=\(hexString(header))")
+            if BLECaptureStore.isEnabled {
+                Task {
+                    await BLECaptureStore.shared.recordNote(category: "decode_error", message: "Failed to decode BLE payload", fields: [
+                        "error": String(describing: error),
+                        "raw": hex,
+                        "header": self.hexString(header)
+                    ])
+                }
             }
         }
     }
@@ -224,6 +289,14 @@ public class CommandConnection: BLEConnectionDelegate {
         case (.basic, BasicCommand.satModeSetInfo.rawValue):
             // Reverse-engineered command 77 (satModeSetInfo). Treat reply as ack.
             return .success
+
+        case (.basic, BasicCommand.registerNotification.rawValue):
+            guard let ackCode = message.body.first else {
+                throw ProtocolError.invalidReply
+            }
+            // The radio returns a one-byte opaque ack here. We don't know the
+            // exact semantics yet, but it is a stable, recognized reply shape.
+            return .registerNotificationAck(ackCode)
 
         case (.basic, BasicCommand.getDevInfo.rawValue):
             let replyStatus = try decodeReplyStatus(message.body)
@@ -394,6 +467,22 @@ public class CommandConnection: BLEConnectionDelegate {
             }
             return .success
 
+        case (.basic, BasicCommand.getPFActions.rawValue):
+            let replyStatus = try decodeReplyStatus(message.body)
+            guard replyStatus == .success else {
+                return .error(replyStatus, "Failed to get PF actions")
+            }
+            let bodyData = Data(message.body.dropFirst(1))
+            print("[BLE-PF-ACTIONS] raw=\(hexString(bodyData))")
+            if BLECaptureStore.isEnabled {
+                Task {
+                    await BLECaptureStore.shared.recordNote(category: "pf_actions", message: "Decoded PF actions payload", fields: [
+                        "body": hexString(bodyData)
+                    ])
+                }
+            }
+            return .pfActions(bodyData)
+
         case (.basic, BasicCommand.getVolume.rawValue):
             let replyStatus = try decodeReplyStatus(message.body)
             guard replyStatus == .success else {
@@ -418,6 +507,7 @@ public class CommandConnection: BLEConnectionDelegate {
             return .success
 
         default:
+            logUnknownPacket(prefix: "[BLE-UNKNOWN-REPLY-TYPE]", message: message)
             return .error(.notSupported, "Unknown reply type")
         }
     }
@@ -443,7 +533,17 @@ public class CommandConnection: BLEConnectionDelegate {
         var stream = BitStream(data: message.body)
         let eventTypeRaw = try stream.readInt(8)
         guard let eventType = EventType(rawValue: UInt8(eventTypeRaw)) else {
-            return .unknown(message.body)
+            let rawEventData = Data(message.body.dropFirst())
+            print("[BLE-UNKNOWN-EVENT] type=\(eventTypeRaw) body=\(hexString(rawEventData))")
+            if BLECaptureStore.isEnabled {
+                Task {
+                    await BLECaptureStore.shared.recordNote(category: "unknown_event", message: "Unknown event type", fields: [
+                        "type": String(eventTypeRaw),
+                        "body": hexString(rawEventData)
+                    ])
+                }
+            }
+            return .raw(.unknown, rawEventData)
         }
         
         let eventData = try stream.readBytes(stream.remaining / 8)
@@ -452,6 +552,10 @@ public class CommandConnection: BLEConnectionDelegate {
         case .htStatusChanged:
             let status = try ProtocolDecoder.decodeStatus(eventData)
             return .statusChanged(status)
+
+        case .radioStatusChanged:
+            let status = try ProtocolDecoder.decodeStatus(eventData)
+            return .radioStatusChanged(status)
             
         case .htChChanged:
             let channel = try ProtocolDecoder.decodeChannel(eventData)
@@ -460,13 +564,35 @@ public class CommandConnection: BLEConnectionDelegate {
         case .htSettingsChanged:
             let settings = try ProtocolDecoder.decodeSettings(eventData)
             return .settingsChanged(settings)
+
+        case .bssSettingsChanged:
+            let settings = try ProtocolDecoder.decodeBeaconSettings(eventData)
+            return .beaconSettingsChanged(settings)
+
+        case .positionChanged:
+            let position = try ProtocolDecoder.decodePosition(eventData)
+            return .positionChanged(position)
             
         case .dataRxd:
             let fragment = try ProtocolDecoder.decodeTncDataFragment(eventData)
             return .tncDataFragmentReceived(fragment)
+
+        case .dataTxd:
+            let fragment = try ProtocolDecoder.decodeTncDataFragment(eventData)
+            return .tncDataFragmentTransmitted(fragment)
             
         default:
-            return .unknown(eventData)
+            print("[BLE-EVENT-RAW] type=\(eventType) body=\(hexString(eventData))")
+            if BLECaptureStore.isEnabled {
+                Task {
+                    await BLECaptureStore.shared.recordNote(category: "raw_event", message: "Known event with undecoded payload", fields: [
+                        "type": String(eventType.rawValue),
+                        "name": String(describing: eventType),
+                        "body": hexString(eventData)
+                    ])
+                }
+            }
+            return .raw(eventType, eventData)
         }
     }
     
@@ -957,6 +1083,23 @@ public class CommandConnection: BLEConnectionDelegate {
             }
             throw ProtocolError.invalidReply
         }
+    }
+
+    public func getPFActionsRaw() async throws -> Data {
+        let reply = try await sendCommandAndWaitForReply(
+            commandGroup: .basic,
+            command: BasicCommand.getPFActions.rawValue,
+            body: Data()
+        )
+
+        guard case .reply(.pfActions(let data)) = reply else {
+            if case .reply(.error(let status, let message)) = reply {
+                throw ProtocolError.commandFailed(status, message)
+            }
+            throw ProtocolError.invalidReply
+        }
+
+        return data
     }
     
     public func setRegion(_ regionID: Int) async throws {

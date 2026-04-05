@@ -6,60 +6,136 @@ struct ConnectView: View {
     @StateObject private var scanner = BLEScanner()
     @State private var selectedDevice: DiscoveredDevice?
 
-    private var connectedDeviceName: String? {
-        if let selectedDevice {
-            return selectedDevice.name
-        }
-        guard let uuid = radioManager.lastPairedDeviceUUID else { return nil }
-        return scanner.knownDevice(for: uuid)?.name
-    }
+    private let accentOrange = Color(red: 0.96, green: 0.48, blue: 0.19)
+    private let accentBlue = Color(red: 0.28, green: 0.63, blue: 0.95)
+    private let pageBackgroundTop = Color(uiColor: .systemGroupedBackground)
+    private let pageBackgroundBottom = Color(uiColor: .secondarySystemGroupedBackground)
+    private let cardFill = Color(uiColor: .secondarySystemGroupedBackground)
+    private let cardStroke = Color.white.opacity(0.08)
 
     private var isBusy: Bool {
         radioManager.isConnecting || radioManager.isAutoReconnecting
     }
 
-    private var bluetoothStatusText: String {
-        switch scanner.bluetoothState {
-        case .poweredOn:
-            return "On"
-        case .poweredOff:
-            return "Off"
-        case .unsupported:
-            return "Unsupported"
-        case .unauthorized:
-            return "Not Authorized"
-        case .resetting:
-            return "Resetting"
-        case .unknown:
-            return "Unknown"
-        @unknown default:
-            return "Unknown"
+    private var savedDevice: DiscoveredDevice? {
+        guard let uuid = radioManager.lastPairedDeviceUUID else { return nil }
+        return scanner.knownDevice(for: uuid)
+    }
+
+    private var connectedDeviceName: String {
+        if let selectedDevice {
+            return selectedDevice.name
+        }
+        if let savedDevice {
+            return savedDevice.name
+        }
+        return "Your radio"
+    }
+
+    private var nearbyDevices: [DiscoveredDevice] {
+        scanner.discoveredDevices.filter { device in
+            guard let savedDevice else { return true }
+            return device.id != savedDevice.id
         }
     }
 
-    private var scanStatusText: String {
+    private var heroEyebrow: String {
         if radioManager.isConnected {
-            return "Paused while connected"
+            return "Connected Radio"
         }
-        return scanner.isScanning ? "Scanning" : "Stopped"
+        if savedDevice != nil {
+            return "Saved Radio"
+        }
+        return "Radio"
+    }
+
+    private var heroTitle: String {
+        if radioManager.isConnected {
+            return connectedDeviceName
+        }
+        if radioManager.isAutoReconnecting {
+            return "Reconnecting to \(connectedDeviceName)"
+        }
+        if radioManager.isConnecting {
+            return selectedDevice?.name ?? "Connecting"
+        }
+        if let savedDevice {
+            return savedDevice.name
+        }
+        return "Connect your radio"
+    }
+
+    private var heroSubtitle: String {
+        if radioManager.isConnected {
+            return "You are ready to control the radio. Disconnect here if you want to switch devices."
+        }
+        if radioManager.isAutoReconnecting {
+            return "Trying your last radio again."
+        }
+        if radioManager.isConnecting {
+            return "Opening the Bluetooth link."
+        }
+        if savedDevice != nil {
+            return "Reconnect in one tap or scan for a different radio nearby."
+        }
+        return "Scan nearby radios, then put your radio into pairing and tap it to connect."
+    }
+
+    private var heroSymbol: String {
+        if radioManager.isConnected {
+            return "checkmark.circle.fill"
+        }
+        if isBusy {
+            return "dot.radiowaves.left.and.right"
+        }
+        return "antenna.radiowaves.left.and.right"
+    }
+
+    private var heroTint: Color {
+        if radioManager.isConnected {
+            return Color.green
+        }
+        if scanner.bluetoothState == .poweredOn {
+            return accentOrange
+        }
+        return Color.orange
+    }
+
+    private var busyActionTitle: String {
+        if radioManager.isAutoReconnecting {
+            return "Reconnecting..."
+        }
+        if radioManager.isConnecting {
+            return "Connecting..."
+        }
+        return "Scanning..."
+    }
+
+    private var shouldShowHeaderScanAction: Bool {
+        !radioManager.isConnected && (savedDevice != nil || !nearbyDevices.isEmpty)
     }
 
     var body: some View {
-        List {
-            connectionStatusSection
-            scannerStatusSection
-            nearbyDevicesSection
-            if !radioManager.isConnected {
-                pairingInstructionsSection
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                heroCard
+
+                if let error = radioManager.connectionError, !error.isEmpty {
+                    errorCard(error)
+                }
+
+                nearbyRadiosCard
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 28)
         }
-        .navigationTitle("Connect Radio")
+        .background(backgroundView.ignoresSafeArea())
+        .navigationTitle("Connect")
+        .navigationBarTitleDisplayMode(.large)
         .refreshable {
-            if !radioManager.isConnected && !radioManager.isConnecting {
-                scanner.stopScanning()
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                scanner.startScanning()
-            }
+            guard !radioManager.isConnected, !radioManager.isConnecting else { return }
+            rescan()
         }
         .task {
             updateScanningState()
@@ -68,188 +144,358 @@ struct ConnectView: View {
             updateScanningState()
         }
         .onChange(of: radioManager.isConnected) {
-            if radioManager.isConnected == true {
-                if selectedDevice == nil,
-                   let uuid = radioManager.lastPairedDeviceUUID {
-                    selectedDevice = scanner.knownDevice(for: uuid)
+            if radioManager.isConnected,
+               selectedDevice == nil,
+               let savedDevice {
+                selectedDevice = savedDevice
+            }
+            updateScanningState()
+        }
+        .onDisappear {
+            if !radioManager.isConnected {
+                scanner.stopScanning()
+            }
+        }
+        .animation(.snappy(duration: 0.25), value: radioManager.isConnected)
+        .animation(.snappy(duration: 0.25), value: scanner.discoveredDevices)
+        .animation(.snappy(duration: 0.25), value: scanner.isScanning)
+    }
+
+    private var backgroundView: some View {
+        LinearGradient(
+            colors: [pageBackgroundTop, pageBackgroundBottom],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
+    private var heroCard: some View {
+        card {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top, spacing: 14) {
+                    ZStack {
+                        Circle()
+                            .fill(heroTint.opacity(0.14))
+                            .frame(width: 52, height: 52)
+
+                        Image(systemName: heroSymbol)
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(heroTint)
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(heroEyebrow)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
+
+                        Text(heroTitle)
+                            .font(.title2.weight(.bold))
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Text(heroSubtitle)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 0)
                 }
-                updateScanningState()
+
+                if radioManager.isConnected {
+                    Button(role: .destructive) {
+                        radioManager.disconnect()
+                        selectedDevice = nil
+                    } label: {
+                        Label("Disconnect", systemImage: "xmark.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                } else if isBusy {
+                    Button {} label: {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(busyActionTitle)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(accentOrange)
+                    .disabled(true)
+                } else if let savedDevice {
+                    ViewThatFits {
+                        HStack(spacing: 10) {
+                            connectButton(for: savedDevice, title: "Connect \(savedDevice.name)")
+                            scanButton(title: "Scan Nearby")
+                        }
+
+                        VStack(spacing: 10) {
+                            connectButton(for: savedDevice, title: "Connect \(savedDevice.name)")
+                            scanButton(title: "Scan Nearby")
+                        }
+                    }
+
+                    Button("Forget Saved Radio", role: .destructive) {
+                        scanner.clearLastPairedDevice()
+                        if selectedDevice?.id == savedDevice.id {
+                            selectedDevice = nil
+                        }
+                    }
+                    .font(.footnote.weight(.semibold))
+                    .buttonStyle(.plain)
+                } else {
+                    scanButton(title: "Scan Nearby Radios")
+                }
+
+                Text(pairingInstructionText)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
-    @ViewBuilder
-    private var connectionStatusSection: some View {
-        Section("Connection") {
-            if radioManager.isConnected {
-                HStack {
+    private var nearbyRadiosCard: some View {
+        card {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .center) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(connectedDeviceName ?? "Connected Radio")
-                            .font(.headline)
-                        Text("Connected")
-                            .font(.footnote)
+                        Text("Nearby Radios")
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(.primary)
+
+                        Text("Choose a radio to connect.")
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
 
-                    Spacer()
+                    Spacer(minLength: 12)
 
-                    Button(role: .destructive) {
-                        radioManager.disconnect()
-                        scanner.startScanning()
-                        selectedDevice = nil
-                    } label: {
-                        Text("Disconnect")
-                            .fontWeight(.semibold)
+                    if shouldShowHeaderScanAction {
+                        Button(scanner.isScanning ? "Scanning..." : "Scan") {
+                            rescan()
+                        }
+                        .font(.footnote.weight(.semibold))
+                        .buttonStyle(.bordered)
+                        .disabled(scanner.bluetoothState != .poweredOn || isBusy)
                     }
                 }
 
-                LabeledContent("Saved Device") {
-                    Text(connectedDeviceName ?? "Unknown")
-                }
-            } else if isBusy {
-                HStack(spacing: 12) {
-                    ProgressView()
-                    Text(radioManager.isAutoReconnecting ? "Reconnecting…" : "Connecting…")
-                        .foregroundStyle(.secondary)
-                }
-            } else if let error = radioManager.connectionError {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.subheadline)
-                    .foregroundStyle(.orange)
-            } else {
-                Text("Select a radio below to connect.")
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
+                if radioManager.isConnected {
+                    nearbyMessageRow(
+                        symbol: "checkmark.circle",
+                        tint: Color.green,
+                        title: "Radio connected",
+                        detail: "Disconnect above if you want to switch to a different radio."
+                    )
+                } else if scanner.bluetoothState != .poweredOn {
+                    nearbyMessageRow(
+                        symbol: "bolt.horizontal.circle",
+                        tint: Color.orange,
+                        title: "Bluetooth is off",
+                        detail: "Turn on Bluetooth, then scan again."
+                    )
+                } else if nearbyDevices.isEmpty {
+                    nearbyEmptyState
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(nearbyDevices.enumerated()), id: \.element.id) { index, device in
+                            if index > 0 {
+                                Divider()
+                                    .padding(.leading, 54)
+                            }
 
-    private var scannerStatusSection: some View {
-        Section("Scanner") {
-            LabeledContent("Bluetooth") {
-                Text(bluetoothStatusText)
-            }
-            LabeledContent("Scan") {
-                HStack(spacing: 8) {
-                    if scanner.isScanning && !radioManager.isConnected {
-                        ProgressView()
-                            .controlSize(.small)
+                            nearbyRadioRow(device)
+                        }
                     }
-                    Text(scanStatusText)
-                }
-            }
-            if let uuid = radioManager.lastPairedDeviceUUID,
-               let known = scanner.knownDevice(for: uuid) {
-                LabeledContent("Last Paired") {
-                    Text(known.name)
-                }
-            }
-            if !radioManager.isConnected {
-                Button {
-                    scanner.stopScanning()
-                    scanner.startScanning()
-                } label: {
-                    Label("Rescan", systemImage: "arrow.clockwise")
+                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
             }
         }
     }
 
-    @ViewBuilder
-    private var nearbyDevicesSection: some View {
-        Section {
-            if scanner.bluetoothState != .poweredOn {
-                ContentUnavailableView(
-                    "Bluetooth Disabled",
-                    systemImage: "bolt.horizontal.circle",
-                    description: Text("Enable Bluetooth to discover and pair with a radio.")
-                )
-            } else if radioManager.isConnected {
-                Text("Scanning is paused while connected.")
-                    .foregroundStyle(.secondary)
-            } else if scanner.discoveredDevices.isEmpty {
-                ContentUnavailableView(
-                    scanner.isScanning ? "Searching" : "No Radios Found",
-                    systemImage: scanner.isScanning ? "dot.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash",
-                    description: Text("Pull to refresh or tap Rescan after enabling pairing mode on the radio.")
-                )
-            } else {
-                ForEach(scanner.discoveredDevices) { device in
-                    deviceRow(for: device)
-                }
-            }
-        } header: {
-            HStack {
-                Text("Nearby Radios")
-                Spacer()
-                if scanner.isScanning && !radioManager.isConnected {
+    private var nearbyEmptyState: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if scanner.isScanning {
+                HStack(spacing: 10) {
                     ProgressView()
                         .controlSize(.small)
+                    Text("Looking for radios nearby...")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
                 }
+            } else {
+                Text("No radios found yet")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
             }
-        }
-    }
 
-    private var pairingInstructionsSection: some View {
-        Section("Pairing Mode") {
-            Text("On the radio, go to the main menu and toggle pairing.")
-            Text("After that, tap Rescan or pull to refresh if it doesn’t show up right away.")
+            Text(pairingInstructionText)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if savedDevice == nil {
+                scanButton(title: scanner.isScanning ? "Scanning..." : "Start Scan")
+                    .disabled(scanner.bluetoothState != .poweredOn || isBusy || scanner.isScanning)
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
-    private func deviceRow(for device: DiscoveredDevice) -> some View {
+    private func nearbyRadioRow(_ device: DiscoveredDevice) -> some View {
         Button {
-            connectToDevice(device)
             selectedDevice = device
+            connectToDevice(device)
         } label: {
             HStack(spacing: 14) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.accentColor.opacity(0.12))
-                        .frame(width: 44, height: 44)
-                    Image(systemName: device.isPaired ? "dot.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right")
-                        .foregroundStyle(Color.accentColor)
+                    Circle()
+                        .fill(accentBlue.opacity(0.14))
+                        .frame(width: 40, height: 40)
+
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(accentBlue)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(device.name)
-                            .font(.body.weight(.semibold))
-                        if device.isPaired {
-                            Image(systemName: "star.fill")
-                                .font(.caption)
-                                .foregroundStyle(.yellow)
-                        }
-                    }
-                    Text("Signal \(device.rssi) dBm")
+                    Text(device.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    Text(deviceSubtitle(for: device))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
-                Spacer()
 
-                if selectedDevice?.id == device.id && radioManager.isConnected {
-                    Image(systemName: "checkmark")
-                        .foregroundColor(.green)
-                        .padding(.leading, 4)
+                Spacer(minLength: 8)
+
+                if selectedDevice?.id == device.id && isBusy {
+                    ProgressView()
+                        .controlSize(.small)
                 } else {
                     Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
+                        .font(.footnote.weight(.bold))
                         .foregroundStyle(.tertiary)
                 }
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(.plain)
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            if device.isPaired {
-                Button(role: .destructive) {
-                    scanner.clearLastPairedDevice()
-                } label: {
-                    Label("Unpair", systemImage: "trash")
-                }
+        .disabled(isBusy || radioManager.isConnected)
+    }
+
+    private func nearbyMessageRow(symbol: String, tint: Color, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: symbol)
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(tint)
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .disabled(radioManager.isConnecting || radioManager.isConnected)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func errorCard(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Color.orange)
+                .padding(.top, 1)
+
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.orange.opacity(0.20), lineWidth: 1)
+        }
+    }
+
+    private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        content()
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(cardFill, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(cardStroke, lineWidth: 1)
+            }
+    }
+
+    private func connectButton(for device: DiscoveredDevice, title: String) -> some View {
+        Button {
+            selectedDevice = device
+            connectToDevice(device)
+        } label: {
+            Label(title, systemImage: "dot.radiowaves.left.and.right")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(accentOrange)
+        .disabled(scanner.bluetoothState != .poweredOn || isBusy)
+    }
+
+    private func scanButton(title: String) -> some View {
+        Button {
+            rescan()
+        } label: {
+            Label(title, systemImage: "magnifyingglass")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .tint(.primary)
+        .disabled(scanner.bluetoothState != .poweredOn || isBusy)
+    }
+
+    private func deviceSubtitle(for device: DiscoveredDevice) -> String {
+        let signal = signalLabel(for: device.rssi)
+        if device.isPaired {
+            return "Saved radio • \(signal)"
+        }
+        return signal
+    }
+
+    private func signalLabel(for rssi: Int) -> String {
+        if rssi >= -65 { return "Strong signal" }
+        if rssi >= -78 { return "Nearby" }
+        return "Farther away"
+    }
+
+    private var pairingInstructionText: String {
+        if scanner.bluetoothState != .poweredOn {
+            return "Turn on Bluetooth, then on the radio open Main Menu and toggle Pairing."
+        }
+        return "On the radio, open Main Menu and toggle Pairing."
+    }
+
+    private func rescan() {
+        scanner.stopScanning()
+        scanner.startScanning()
     }
 
     private func updateScanningState() {
@@ -272,16 +518,18 @@ struct ConnectView: View {
                 return
             }
 
-            // Save as last paired device on successful validation
             scanner.saveLastPairedDevice(device)
-            
-            radioManager.connect(to: device.peripheral.identifier)
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                radioManager.connect(to: device.peripheral.identifier)
+            }
         }
     }
 }
 
-// MARK: - Preview
 #Preview {
-    ConnectView()
-        .environmentObject(RadioManager())
+    NavigationStack {
+        ConnectView()
+            .environmentObject(RadioManager())
+    }
 }

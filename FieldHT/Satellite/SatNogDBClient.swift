@@ -25,10 +25,22 @@ final class SatNogDBClient {
     private let urlSession: URLSession
 
     private static let allSatellitesTTLSeconds: TimeInterval = 24 * 60 * 60
+    private static let metadataTTLSeconds: TimeInterval = 7 * 24 * 60 * 60
+    private static let transmittersTTLSeconds: TimeInterval = 7 * 24 * 60 * 60
+
+    private struct CachedValue<Value: Codable>: Codable {
+        let fetchedAtUnix: TimeInterval
+        let value: Value
+    }
 
     private static let allSatellitesCacheURL: URL = {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("satnogs_satellites.json", isDirectory: false)
+    }()
+
+    private static let satnogsCacheDirectoryURL: URL = {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("satnogs", isDirectory: true)
     }()
 
     private actor AllSatellitesCache {
@@ -92,15 +104,22 @@ final class SatNogDBClient {
             ]
             guard let url = components.url else { throw SatNogDBError.invalidURL }
 
-            let (data, response) = try await urlSession.data(from: url)
-            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                throw SatNogDBError.httpStatus(http.statusCode)
-            }
             do {
-                return try JSONDecoder().decode([SatNogSatellite].self, from: data)
+                let (data, response) = try await urlSession.data(from: url)
+                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                    throw SatNogDBError.httpStatus(http.statusCode)
+                }
+                do {
+                    return try JSONDecoder().decode([SatNogSatellite].self, from: data)
+                } catch {
+                    let snippet = String(data: data.prefix(400), encoding: .utf8)
+                    throw SatNogDBError.decoding(error, bodySnippet: snippet)
+                }
             } catch {
-                let snippet = String(data: data.prefix(400), encoding: .utf8)
-                throw SatNogDBError.decoding(error, bodySnippet: snippet)
+                if let stale = try? Self.loadCachedValue(from: Self.allSatellitesCacheURL, ttl: nil) as [SatNogSatellite]? {
+                    return stale
+                }
+                throw error
             }
         }
 
@@ -118,27 +137,11 @@ final class SatNogDBClient {
     }
 
     private static func loadAllSatellitesFromDisk(ttl: TimeInterval, now: Date = Date()) throws -> [SatNogSatellite]? {
-        let url = allSatellitesCacheURL
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: url.path) else { return nil }
-
-        let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
-        if let modified = values.contentModificationDate, now.timeIntervalSince(modified) > ttl {
-            return nil
-        }
-
-        let data = try Data(contentsOf: url)
-        return try JSONDecoder().decode([SatNogSatellite].self, from: data)
+        try loadCachedValue(from: allSatellitesCacheURL, ttl: ttl, now: now)
     }
 
     private static func saveAllSatellitesToDisk(_ sats: [SatNogSatellite]) {
-        let url = allSatellitesCacheURL
-        do {
-            let data = try JSONEncoder().encode(sats)
-            try data.write(to: url, options: [.atomic])
-        } catch {
-            // Best-effort only.
-        }
+        saveCachedValue(sats, to: allSatellitesCacheURL)
     }
 
     func satellitesByNorad(_ noradId: Int) async throws -> [SatNogSatellite] {
@@ -151,15 +154,29 @@ final class SatNogDBClient {
             URLQueryItem(name: "format", value: "json")
         ]
         guard let url = components.url else { throw SatNogDBError.invalidURL }
-        return try await get(url: url)
+        return try await cachedGet(
+            url: url,
+            cacheURL: Self.satellitesByNoradCacheURL(noradId: noradId),
+            ttl: Self.metadataTTLSeconds
+        )
     }
 
     func transmitters(noradId: Int) async throws -> [SatNogTransmitter] {
         // Prefer looking up sat_id first, then fetching by sat_id.
         // The transmitters endpoint can otherwise return an unexpectedly large unfiltered list.
-        let sats = try await satellitesByNorad(noradId)
-        if let satId = sats.first?.satId {
-            return try await transmitters(satId: satId)
+        let noradCacheURL = Self.transmittersByNoradCacheURL(noradId: noradId)
+
+        do {
+            let sats = try await satellitesByNorad(noradId)
+            if let satId = sats.first?.satId {
+                let transmitters = try await transmitters(satId: satId)
+                Self.saveCachedValue(transmitters, to: noradCacheURL)
+                return transmitters
+            }
+        } catch {
+            if let cached = try? Self.loadCachedValue(from: noradCacheURL, ttl: nil) as [SatNogTransmitter]? {
+                return cached
+            }
         }
 
         // Fallback to the norad_cat_id filter.
@@ -171,7 +188,11 @@ final class SatNogDBClient {
             URLQueryItem(name: "format", value: "json")
         ]
         guard let url = components.url else { throw SatNogDBError.invalidURL }
-        return try await get(url: url)
+        return try await cachedGet(
+            url: url,
+            cacheURL: noradCacheURL,
+            ttl: Self.transmittersTTLSeconds
+        )
     }
 
     func transmitters(satId: String) async throws -> [SatNogTransmitter] {
@@ -184,7 +205,11 @@ final class SatNogDBClient {
             URLQueryItem(name: "format", value: "json")
         ]
         guard let url = components.url else { throw SatNogDBError.invalidURL }
-        return try await get(url: url)
+        return try await cachedGet(
+            url: url,
+            cacheURL: Self.transmittersBySatIdCacheURL(satId: satId),
+            ttl: Self.transmittersTTLSeconds
+        )
     }
 
     func satellites(search: String, limit: Int = 25) async throws -> [SatNogSatellite] {
@@ -234,6 +259,98 @@ final class SatNogDBClient {
         } catch {
             let snippet = String(data: data.prefix(400), encoding: .utf8)
             throw SatNogDBError.decoding(error, bodySnippet: snippet)
+        }
+    }
+
+    private func cachedGet<T: Codable>(url: URL, cacheURL: URL, ttl: TimeInterval, now: Date = Date()) async throws -> T {
+        if let fresh = try? Self.loadCachedValue(from: cacheURL, ttl: ttl, now: now) as T? {
+            return fresh
+        }
+
+        do {
+            let value: T = try await get(url: url)
+            Self.saveCachedValue(value, to: cacheURL, now: now)
+            return value
+        } catch {
+            if let stale = try? Self.loadCachedValue(from: cacheURL, ttl: nil, now: now) as T? {
+                return stale
+            }
+            throw error
+        }
+    }
+
+    private static func satellitesByNoradCacheURL(noradId: Int) -> URL {
+        cacheFileURL(named: "satellite_norad_\(noradId).json")
+    }
+
+    private static func transmittersByNoradCacheURL(noradId: Int) -> URL {
+        cacheFileURL(named: "transmitters_norad_\(noradId).json")
+    }
+
+    private static func transmittersBySatIdCacheURL(satId: String) -> URL {
+        cacheFileURL(named: "transmitters_satid_\(sanitizedCacheComponent(satId)).json")
+    }
+
+    private static func cacheFileURL(named name: String) -> URL {
+        ensureCacheDirectory()
+        return satnogsCacheDirectoryURL.appendingPathComponent(name, isDirectory: false)
+    }
+
+    private static func ensureCacheDirectory() {
+        try? FileManager.default.createDirectory(
+            at: satnogsCacheDirectoryURL,
+            withIntermediateDirectories: true,
+            attributes: nil
+        )
+    }
+
+    private static func sanitizedCacheComponent(_ value: String) -> String {
+        value.replacingOccurrences(
+            of: #"[^A-Za-z0-9._-]"#,
+            with: "_",
+            options: .regularExpression
+        )
+    }
+
+    private static func loadCachedValue<Value: Codable>(
+        from url: URL,
+        ttl: TimeInterval?,
+        now: Date = Date()
+    ) throws -> Value? {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: url.path) else { return nil }
+
+        let data = try Data(contentsOf: url)
+        let decoder = JSONDecoder()
+
+        if let envelope = try? decoder.decode(CachedValue<Value>.self, from: data) {
+            if let ttl, now.timeIntervalSince1970 - envelope.fetchedAtUnix > ttl {
+                return nil
+            }
+            return envelope.value
+        }
+
+        let rawValue = try decoder.decode(Value.self, from: data)
+        if let ttl {
+            let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
+            if let modified = values.contentModificationDate, now.timeIntervalSince(modified) > ttl {
+                return nil
+            }
+        }
+        return rawValue
+    }
+
+    private static func saveCachedValue<Value: Codable>(_ value: Value, to url: URL, now: Date = Date()) {
+        do {
+            try? FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+            let data = try JSONEncoder().encode(CachedValue(fetchedAtUnix: now.timeIntervalSince1970, value: value))
+            try data.write(to: url, options: [.atomic])
+        } catch {
+            // Best-effort only.
         }
     }
 }

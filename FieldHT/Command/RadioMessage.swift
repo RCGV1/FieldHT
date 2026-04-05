@@ -20,7 +20,9 @@ public enum ReplyMessage {
     case beaconSettings(BeaconSettings)
     case regionName(String)
     case pf(PFConfig)
+    case pfActions(Data)
     case volume(Int)
+    case registerNotificationAck(UInt8)
     case success
     case error(ReplyStatus, String)
 }

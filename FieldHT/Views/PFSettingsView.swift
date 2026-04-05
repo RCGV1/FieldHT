@@ -253,32 +253,7 @@ struct PFSettingsView: View {
     
     // All available effects
     private var allEffects: [PFEffectType] {
-        [
-            .disable,
-            .alarm,
-            .alarmAndMute,
-            .toggleOffline,
-            .toggleRadioTx,
-            .toggleTxPower,
-            .toggleFM,
-            .prevChannel,
-            .nextChannel,
-            .tCall,
-            .prevRegion,
-            .nextRegion,
-            .toggleChScan,
-            .mainPTT,
-            .subPTT,
-            .toggleMonitor,
-            .btPairing,
-            .toggleDoubleCh,
-            .toggleABCh,
-            .sendLocation,
-            .oneClickLink,
-            .volDown,
-            .volUp,
-            .toggleMute
-        ]
+        viewModel.supportedPFActions
     }
     
     private func triggerDisplayName(_ action: PFActionType) -> String {
@@ -301,32 +276,7 @@ struct PFSettingsView: View {
     }
     
     private func effectDisplayName(_ effect: PFEffectType) -> String {
-        switch effect {
-        case .disable: return "Disable"
-        case .alarm: return "Alarm"
-        case .alarmAndMute: return "Alarm and Mute"
-        case .toggleOffline: return "Toggle Standby"
-        case .toggleRadioTx: return "Toggle Radio TX"
-        case .toggleTxPower: return "Toggle TX Power"
-        case .toggleFM: return "Toggle FM"
-        case .prevChannel: return "Previous Channel"
-        case .nextChannel: return "Next Channel"
-        case .tCall: return "T-Call"
-        case .prevRegion: return "Previous Region"
-        case .nextRegion: return "Next Region"
-        case .toggleChScan: return "Toggle Channel Scan"
-        case .mainPTT: return "Main PTT"
-        case .subPTT: return "Sub PTT"
-        case .toggleMonitor: return "Toggle Monitor"
-        case .btPairing: return "BT Pairing"
-        case .toggleDoubleCh: return "Toggle Double Channel"
-        case .toggleABCh: return "Toggle A/B Channel"
-        case .sendLocation: return "Send Location"
-        case .oneClickLink: return "One Click Link"
-        case .volDown: return "Volume Down"
-        case .volUp: return "Volume Up"
-        case .toggleMute: return "Toggle Mute"
-        }
+        effect.displayName
     }
 }
 
