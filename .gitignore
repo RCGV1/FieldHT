@@ -31,3 +31,6 @@ Configs/FieldHT-Secrets.xcconfig
 
 # Local device build archives
 .device-build-*/
+
+# Local App Store Connect metadata scratch files
+.asc-metadata/
