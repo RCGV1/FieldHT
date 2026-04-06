@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "app": {
+    "bundle_id": "BenFaer.FieldHT",
+    "project": "FieldHT.xcodeproj",
+    "scheme": "FieldHT",
+    "simulator_udid": "booted"
+  },
+  "paths": {
+    "plan": ".asc/screenshots.json",
+    "raw_dir": "./screenshots/raw",
+    "framed_dir": "./screenshots/framed"
+  },
+  "pipeline": {
+    "frame_enabled": false,
+    "upload_enabled": false
+  },
+  "upload": {
+    "version_localization_id": "2b90f61b-23e5-471d-8c4b-31a7476b4946",
+    "device_type": "IPHONE_61",
+    "source_dir": "./screenshots/raw"
+  }
+}

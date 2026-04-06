@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "app": {
+    "bundle_id": "BenFaer.FieldHT",
+    "udid": "booted",
+    "output_dir": "./screenshots/raw"
+  },
+  "steps": [
+    { "action": "launch" },
+    { "action": "wait", "duration_ms": 1200 },
+    { "action": "screenshot", "name": "launch" }
+  ]
+}
