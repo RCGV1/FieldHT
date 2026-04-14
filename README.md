@@ -134,4 +134,4 @@ If FieldHT saves you time at the radio, you can [buy me a coffee](https://buymea
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+GPLv3 — see [LICENSE](/Users/benjaminfaershtein/Documents/FieldHT/LICENSE) for details.
