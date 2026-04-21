@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+from datetime import datetime, timezone
 import subprocess
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -257,6 +258,16 @@ def decode_power_status(data: bytes) -> dict[str, object]:
     if len(data) >= 3:
         return {"type": name, "value": data[2]}
     return {"type": name}
+
+
+def decode_set_time(data: bytes) -> dict[str, object]:
+    if len(data) != 4:
+        return {"raw": data.hex()}
+    timestamp = int.from_bytes(data, "big")
+    return {
+        "unix": timestamp,
+        "utc": datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat(),
+    }
 
 
 def decode_status(data: bytes) -> dict[str, object]:
@@ -616,6 +627,9 @@ def timeline_lines(frames: list[ProtocolFrame]) -> list[str]:
             summary = ", ".join(item["effect"] for item in decode_pf_effect_table(frame.body))
         elif frame.command == 75 and frame.is_reply:
             summary = ", ".join(item["effect"] for item in decode_pf_actions(frame.body))
+        elif frame.command == 70 and not frame.is_reply:
+            set_time = decode_set_time(frame.body)
+            summary = f"{set_time['utc']} ({set_time['unix']})" if 'utc' in set_time else frame.body.hex()
         elif frame.command == 9 and not frame.is_reply:
             summary = str(decode_event(frame.body))
         lines.append(

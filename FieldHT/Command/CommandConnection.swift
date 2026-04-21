@@ -173,12 +173,7 @@ public class CommandConnection: BLEConnectionDelegate {
                     let reply = try decodeReply(message: message)
                     continuation.resume(returning: .reply(reply))
                 } else {
-                    if case .registerNotificationAck(let code) = try decodeReply(message: message) {
-                        logDecodedOpaqueReply(
-                            message: message,
-                            description: "registerNotification ack code=\(code)",
-                            fields: ["code": String(code)]
-                        )
+                    if handleUnsolicitedReply(message) {
                         return
                     }
                     let isQuietBasicReply = (message.commandGroup == .basic) && (
@@ -186,7 +181,8 @@ public class CommandConnection: BLEConnectionDelegate {
                         message.command == BasicCommand.freqModeGetStatus.rawValue ||
                         message.command == BasicCommand.satModeSetInfo.rawValue ||
                         message.command == BasicCommand.writeBSSSettings.rawValue ||
-                        message.command == BasicCommand.setVolume.rawValue
+                        message.command == BasicCommand.setVolume.rawValue ||
+                        message.command == BasicCommand.setTime.rawValue
                     )
                     if !isQuietBasicReply {
                         logUnknownPacket(prefix: "[BLE-UNKNOWN-REPLY]", message: message)
@@ -215,6 +211,46 @@ public class CommandConnection: BLEConnectionDelegate {
                 }
             }
         }
+    }
+
+    private func handleUnsolicitedReply(_ message: ProtocolMessage) -> Bool {
+        do {
+            switch (message.commandGroup, message.command) {
+            case (.basic, BasicCommand.registerNotification.rawValue):
+                if case .registerNotificationAck(let code) = try decodeReply(message: message) {
+                    logDecodedOpaqueReply(
+                        message: message,
+                        description: "registerNotification ack code=\(code)",
+                        fields: ["code": String(code)]
+                    )
+                    return true
+                }
+            case (.basic, BasicCommand.setTime.rawValue):
+                guard let code = message.body.first else {
+                    return false
+                }
+                let description: String
+                switch code {
+                case ReplyStatus.success.rawValue:
+                    description = "setTime final ack"
+                case ReplyStatus.invalidParameter.rawValue:
+                    description = "setTime provisional ack"
+                default:
+                    description = "setTime ack code=\(code)"
+                }
+                logDecodedOpaqueReply(
+                    message: message,
+                    description: description,
+                    fields: ["code": String(code)]
+                )
+                return true
+            default:
+                return false
+            }
+        } catch {
+            return false
+        }
+        return false
     }
 
     // MARK: - Fire-and-forget commands
@@ -268,6 +304,16 @@ public class CommandConnection: BLEConnectionDelegate {
         let data = ProtocolEncoder.encodeMessage(
             commandGroup: .basic,
             command: BasicCommand.satModeSetInfo.rawValue,
+            body: body
+        )
+        try await sendBytes(data)
+    }
+
+    public func syncTime(_ date: Date = Date()) async throws {
+        let body = ProtocolEncoder.encodeSetTime(date)
+        let data = ProtocolEncoder.encodeMessage(
+            commandGroup: .basic,
+            command: BasicCommand.setTime.rawValue,
             body: body
         )
         try await sendBytes(data)

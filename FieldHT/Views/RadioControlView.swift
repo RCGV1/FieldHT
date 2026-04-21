@@ -396,7 +396,7 @@ struct RadioControlView: View {
         if controller.state == nil {
             try? await controller.hydrate()
         } else {
-            try? await controller.hydrateChannels()
+            _ = try? await controller.hydrateChannels()
         }
 
         viewModel.loadChannels()

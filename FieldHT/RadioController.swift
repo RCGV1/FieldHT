@@ -174,6 +174,13 @@ public class RadioController: ObservableObject {
         ] {
             try? await connection.enableEvent(eventType)
         }
+
+        do {
+            try await connection.syncTime()
+            print("RadioController: synced radio time")
+        } catch {
+            print("RadioController: failed to sync radio time: \(error)")
+        }
         
         // Initialize state
         let newState = RadioState(
@@ -244,6 +251,10 @@ public class RadioController: ObservableObject {
         return regionNames
     }
 
+    public func syncTime(_ date: Date = Date()) async throws {
+        try await connection.syncTime(date)
+    }
+
     private func pollStatusUntilRegionMatches(_ regionID: Int, timeoutNanoseconds: UInt64 = 2_000_000_000, pollEveryNanoseconds: UInt64 = 200_000_000) async -> Status? {
         let start = DispatchTime.now().uptimeNanoseconds
         while DispatchTime.now().uptimeNanoseconds - start < timeoutNanoseconds {
@@ -299,8 +310,6 @@ public class RadioController: ObservableObject {
             case .raw(let eventType, let data):
                 let hex = data.map { String(format: "%02hhx", $0) }.joined()
                 print("RadioController: raw event \(eventType) body=\(hex)")
-            default:
-                break
             }
         }
     }

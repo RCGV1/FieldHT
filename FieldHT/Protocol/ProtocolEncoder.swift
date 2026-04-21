@@ -189,6 +189,13 @@ public struct ProtocolEncoder {
         return stream.toData()
     }
 
+    public static func encodeSetTime(_ date: Date) -> Data {
+        var stream = BitStream()
+        let unixTime = max(0, Int(date.timeIntervalSince1970.rounded()))
+        stream.writeInt(unixTime, bitCount: 32)
+        return stream.toData()
+    }
+
     // MARK: - Frequency/Satellite Mode (Reverse-engineered)
 
     /// Encodes `freqModeSetPar` (basic cmd 35) as seen in BLE logs.
