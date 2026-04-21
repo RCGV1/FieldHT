@@ -341,6 +341,20 @@ public class CommandConnection: BLEConnectionDelegate {
                 return .error(replyStatus, "Failed to set settings")
             }
             return .success
+
+        case (.basic, BasicCommand.setHTOnOff.rawValue):
+            let replyStatus = try decodeReplyStatus(message.body)
+            guard replyStatus == .success else {
+                return .error(replyStatus, "Failed to set HT on/off")
+            }
+            return .success
+
+        case (.basic, BasicCommand.radioSetMode.rawValue):
+            let replyStatus = try decodeReplyStatus(message.body)
+            guard replyStatus == .success else {
+                return .error(replyStatus, "Failed to set radio mode")
+            }
+            return .success
             
         case (.basic, BasicCommand.getHTStatus.rawValue):
             let replyStatus = try decodeReplyStatus(message.body)

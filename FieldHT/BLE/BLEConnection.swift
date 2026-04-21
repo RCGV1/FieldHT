@@ -397,7 +397,7 @@ extension BLEConnection: CBCentralManagerDelegate {
         }
     }
 
-    @objc public func centralManager(
+    public func centralManager(
         _ central: CBCentralManager,
         willRestoreState dict: [String: Any]
     ) {

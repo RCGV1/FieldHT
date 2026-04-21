@@ -128,7 +128,7 @@ Issues and pull requests are welcome. Please open an issue first for anything be
 
 ## Support
 
-If FieldHT saves you time at the radio, you can [buy me a coffee](https://buymeacoffee.com/benfaer). It's appreciated but never required.
+If FieldHT saves you time at the radio, optional in-app tip tiers are available inside the app's support sections. They're appreciated but never required.
 
 ---
 

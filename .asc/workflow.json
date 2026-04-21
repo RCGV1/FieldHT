@@ -1,0 +1,46 @@
+{
+  "env": {
+    "APP_ID": "6758900235",
+    "APP_VERSION": "1.3",
+    "SET_RELEASE_NOTES": "false",
+    "PROJECT_PATH": "/Users/benjaminfaershtein/Documents/FieldHT/FieldHT.xcodeproj",
+    "SCHEME": "FieldHT",
+    "EXPORT_OPTIONS": "/Users/benjaminfaershtein/Documents/FieldHT/.asc/ExportOptions.Release.plist",
+    "ARCHIVE_PATH": "/Users/benjaminfaershtein/Documents/FieldHT/.asc/artifacts/FieldHT.xcarchive",
+    "IPA_PATH": "/Users/benjaminfaershtein/Documents/FieldHT/.asc/artifacts/FieldHT.ipa",
+    "RELEASE_NOTES": "Improves radio connection reliability, refreshes satellite and connection workflows, and fixes UV-PRO scan control so scan state, monitor mode, and restore behavior stay in sync."
+  },
+  "before_all": "mkdir -p /Users/benjaminfaershtein/Documents/FieldHT/.asc/artifacts && asc auth status >/dev/null",
+  "error": "echo workflow_failed >&2",
+  "workflows": {
+    "release-upload": {
+      "description": "Build a release archive, upload it to App Store Connect, attach it to version 1.3, and validate readiness without submitting for review.",
+      "steps": [
+        {
+          "name": "resolve_next_build",
+          "run": "asc builds next-build-number --app \"$APP_ID\" --version \"$APP_VERSION\" --platform IOS --output json",
+          "outputs": {
+            "NEXT_BUILD_NUMBER": "$.nextBuildNumber"
+          }
+        },
+        {
+          "name": "set_project_build_number",
+          "run": "asc xcode version edit --project \"$PROJECT_PATH\" --build-number \"${steps.resolve_next_build.NEXT_BUILD_NUMBER}\""
+        },
+        {
+          "name": "set_release_notes",
+          "if": "SET_RELEASE_NOTES",
+          "run": "asc apps info edit --app \"$APP_ID\" --version \"$APP_VERSION\" --platform IOS --locale en-US --whats-new \"$RELEASE_NOTES\""
+        },
+        {
+          "name": "upload_appstore_build",
+          "run": "asc publish appstore --app \"$APP_ID\" --project \"$PROJECT_PATH\" --scheme \"$SCHEME\" --version \"$APP_VERSION\" --build-number \"${steps.resolve_next_build.NEXT_BUILD_NUMBER}\" --archive-path \"$ARCHIVE_PATH\" --ipa-path \"$IPA_PATH\" --export-options \"$EXPORT_OPTIONS\" --archive-xcodebuild-flag=-allowProvisioningUpdates --export-xcodebuild-flag=-allowProvisioningUpdates --wait --timeout 45m"
+        },
+        {
+          "name": "validate_staged_release",
+          "run": "asc validate --app \"$APP_ID\" --version \"$APP_VERSION\""
+        }
+      ]
+    }
+  }
+}

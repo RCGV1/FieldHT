@@ -133,19 +133,11 @@ struct SpeakerMicPFSettingsView: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
 
-                Text("Support the next mic so I can buy it, decode it, and add proper button setup.")
+                Text("Optional tip tiers help fund the hardware work needed to decode and add support for more speaker mics.")
                     .font(.headline)
                     .multilineTextAlignment(.center)
 
                 VStack(spacing: 14) {
-                    Link(destination: URL(string: "https://buymeacoffee.com/benfaer")!) {
-                        Text("Help Fund Support for This Mic")
-                            .font(.headline.weight(.semibold))
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-
                     SupportDeveloperRow()
                 }
                 .padding(18)

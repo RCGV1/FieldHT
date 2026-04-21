@@ -134,6 +134,8 @@ struct RadioControlView: View {
                     channelIndex: radioManager.vfoAIndex,
                     viewModel: viewModel,
                     isActive: radioManager.activeChannel == .a,
+                    isReceivingAudio: radioManager.currentReceivingChannelID == (radioManager.isVFOA ? 252 : radioManager.vfoAIndex),
+                    isTransmittingAudio: radioManager.isTransmitting && (radioManager.activeChannel == .a || radioManager.activeChannel == .off),
                     isVFO: radioManager.isVFOA,
                     vfoFrequency: radioManager.vfoAFrequencyMHz,
                     vfoChannel: radioManager.vfoAChannel,
@@ -148,6 +150,8 @@ struct RadioControlView: View {
                     channelIndex: radioManager.vfoBIndex,
                     viewModel: viewModel,
                     isActive: radioManager.activeChannel == .b,
+                    isReceivingAudio: radioManager.currentReceivingChannelID == (radioManager.isVFOB ? 251 : radioManager.vfoBIndex),
+                    isTransmittingAudio: radioManager.isTransmitting && radioManager.activeChannel == .b,
                     isVFO: radioManager.isVFOB,
                     vfoFrequency: radioManager.vfoBFrequencyMHz,
                     vfoChannel: radioManager.vfoBChannel,
@@ -163,6 +167,8 @@ struct RadioControlView: View {
                 channelIndex: radioManager.vfoAIndex,
                 viewModel: viewModel,
                 isActive: true,
+                isReceivingAudio: radioManager.currentReceivingChannelID == (radioManager.isVFOA ? 252 : radioManager.vfoAIndex),
+                isTransmittingAudio: radioManager.isTransmitting,
                 isVFO: radioManager.isVFOA,
                 vfoFrequency: radioManager.vfoAFrequencyMHz,
                 vfoChannel: radioManager.vfoAChannel,
@@ -275,44 +281,21 @@ struct RadioControlView: View {
         .padding()
     }
 
-    private func currentActiveChannelForTalkAround() -> Channel? {
-        guard let controller = radioManager.radioController else { return nil }
-
-        let active = radioManager.activeChannel
-        let channelID: Int
-
-        switch active {
-        case .a:
-            channelID = radioManager.isVFOA ? 252 : radioManager.vfoAIndex
-        case .b:
-            channelID = radioManager.isVFOB ? 251 : radioManager.vfoBIndex
-        case .off:
-            // If dual watch is off we treat A as active.
-            channelID = radioManager.isVFOA ? 252 : radioManager.vfoAIndex
-        }
-
-        return controller.channelsForCurrentRegion.first(where: { $0.channelID == channelID })
-    }
-
     private var quickTogglesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Quick Toggles")
+            Text("Quick Actions")
                 .font(.headline)
 
             HStack {
                 Toggle(
                     isOn: Binding(
-                        get: { currentActiveChannelForTalkAround()?.talkAround ?? false },
-                        set: { newValue in
-                            guard var channel = currentActiveChannelForTalkAround() else { return }
-                            channel.talkAround = newValue
-                            radioManager.updateChannel(channel)
-                        }
+                        get: { radioManager.isScanning },
+                        set: { radioManager.setScanning($0) }
                     )
                 ) {
-                    Label("Talk Around", systemImage: "arrow.triangle.2.circlepath")
+                    Label("Scan", systemImage: "dot.radiowaves.left.and.right")
                 }
-                .disabled(!radioManager.isConnected || radioManager.isBusy || currentActiveChannelForTalkAround() == nil)
+                .disabled(!radioManager.isConnected || radioManager.isBusy)
                 
                 Spacer()
             }
@@ -328,23 +311,27 @@ struct RadioControlView: View {
                 radioManager.setDualWatch(!radioManager.isDualWatchOn)
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: radioManager.isDualWatchOn
-                          ? "rectangle.split.2x1.fill"
-                          : "rectangle")
+                    Image(systemName: radioManager.monitorModeSystemImage)
                         .font(.headline)
 
-                    Text("Dual Monitor")
+                    Text(radioManager.monitorModeLabel)
                         .font(.headline)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .foregroundColor(radioManager.isDualWatchOn ? .green : .primary)
+                .foregroundColor(radioManager.isScanning ? .orange : (radioManager.isDualWatchOn ? .green : .primary))
                 .background(cardBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(radioManager.isDualWatchOn ? Color.green.opacity(0.8) : Color.secondary.opacity(0.3), lineWidth: 1)
+                        .stroke(
+                            radioManager.isScanning
+                                ? Color.orange.opacity(0.8)
+                                : (radioManager.isDualWatchOn ? Color.green.opacity(0.8) : Color.secondary.opacity(0.3)),
+                            lineWidth: 1
+                        )
                 )
             }
+            .disabled(radioManager.isScanning || !radioManager.isConnected || radioManager.isBusy)
 
             Spacer()
         }
@@ -376,16 +363,10 @@ struct RadioControlView: View {
         .onAppear {
             localSquelchLevel = radioManager.squelchLevel
             viewModel.setRadioController(radioManager.radioController)
-            
-            // Ensure channels are loaded - hydrate if needed
+
             if radioManager.isConnected {
                 Task {
-                    // Check if we need to hydrate (no state loaded yet)
-                    let needsHydrate = radioManager.radioController?.state == nil
-                    if needsHydrate {
-                        try? await radioManager.radioController?.hydrate()
-                    }
-                    viewModel.loadChannels()
+                    await syncRadioContent()
                 }
             }
         }
@@ -393,11 +374,7 @@ struct RadioControlView: View {
             if isConnected {
                 viewModel.setRadioController(radioManager.radioController)
                 Task {
-                    let needsHydrate = radioManager.radioController?.state == nil
-                    if needsHydrate {
-                        try? await radioManager.radioController?.hydrate()
-                    }
-                    viewModel.loadChannels()
+                    await syncRadioContent()
                 }
             } else {
                 viewModel.setRadioController(nil)
@@ -411,6 +388,18 @@ struct RadioControlView: View {
         .onChange(of: radioManager.squelchLevel) { _, newValue in
             localSquelchLevel = newValue
         }
+    }
+
+    private func syncRadioContent() async {
+        guard let controller = radioManager.radioController else { return }
+
+        if controller.state == nil {
+            try? await controller.hydrate()
+        } else {
+            try? await controller.hydrateChannels()
+        }
+
+        viewModel.loadChannels()
     }
 
 
@@ -472,6 +461,8 @@ struct VFOControl: View {
     let channelIndex: Int
     @ObservedObject var viewModel: ChannelViewModel
     let isActive: Bool
+    let isReceivingAudio: Bool
+    let isTransmittingAudio: Bool
     let isVFO: Bool
     let vfoFrequency: Double
     let vfoChannel: Channel?
@@ -486,24 +477,60 @@ struct VFOControl: View {
         channelIndex < viewModel.channels.count ? viewModel.channels[channelIndex] : nil
     }
 
+    private var compactTitle: String {
+        title.replacingOccurrences(of: "Channel", with: "Chan")
+    }
+
+    @ViewBuilder
+    private var activityIndicator: some View {
+        if isTransmittingAudio {
+            Image(systemName: "mic.fill")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.red)
+                .accessibilityLabel("Transmitting")
+        } else if isReceivingAudio {
+            Image(systemName: "speaker.wave.2.fill")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.green)
+                .accessibilityLabel("Receiving")
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading) {
             HStack {
-                Text(title)
-                    .font(.headline)
-                    .foregroundColor(isActive ? .green : .blue)
+                HStack(spacing: 6) {
+                    ViewThatFits(in: .horizontal) {
+                        Text(title)
+                            .font(.headline)
+                            .lineLimit(1)
 
-                
-                Spacer()
-                
-                Button(action: onToggleVFO) {
-                    Text(isVFO ? "MEM" : "VFO")
-                        .font(.caption)
-                        .bold()
-                        .padding(4)
-                        .background(Color.orange.opacity(0.2))
-                        .cornerRadius(4)
+                        Text(compactTitle)
+                            .font(.headline)
+                            .lineLimit(1)
+                    }
+
+                    activityIndicator
                 }
+                .foregroundColor(isActive ? .green : .blue)
+
+                Spacer()
+
+                Button(action: onToggleVFO) {
+                    HStack(spacing: 4) {
+                        Text(isVFO ? "MEM" : "VFO")
+                            .font(.caption)
+                            .bold()
+
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.caption2.weight(.bold))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .background(Color.orange.opacity(0.2))
+                    .cornerRadius(4)
+                }
+                .accessibilityLabel(isVFO ? "Switch to memory mode" : "Switch to VFO mode")
             }
 
             Spacer()
@@ -513,7 +540,7 @@ struct VFOControl: View {
                     Text("VFO Mode")
                         .font(.caption)
                         .foregroundColor(.orange)
-                    
+
                     Text(String(format: "%.5f MHz", vfoFrequency))
                         .font(.system(size: 24, weight: .bold, design: .monospaced))
                         .foregroundColor(.primary)

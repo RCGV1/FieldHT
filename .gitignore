@@ -35,3 +35,5 @@ Configs/FieldHT-Secrets.xcconfig
 # Local App Store Connect metadata scratch files
 .asc-metadata/
 .asc/privacy.json
+.asc/artifacts/
+.asc/runs/

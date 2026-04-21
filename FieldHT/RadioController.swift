@@ -17,7 +17,7 @@ public class RadioController: ObservableObject {
         let connection = CommandConnection.newBLE(
             deviceUUID: deviceUUID,
             radioManager: radioManager,
-            enableStateRestoration: false
+            enableStateRestoration: true
         )
         return RadioController(connection: connection)
     }
@@ -31,11 +31,45 @@ public class RadioController: ObservableObject {
     public var deviceInfo: DeviceInfo {
         return state?.deviceInfo ?? DeviceInfo.empty()
     }
+
+    private func isValidChannelID(_ channelID: Int, deviceInfo: DeviceInfo) -> Bool {
+        (0..<deviceInfo.channelCount).contains(channelID) || [251, 252, 253].contains(channelID)
+    }
+
+    private func clampedRegionID(_ regionID: Int, regionCount: Int? = nil) -> Int {
+        let availableRegionCount = regionCount ?? state?.regionNames.count ?? state?.deviceInfo.regionCount ?? 0
+        guard availableRegionCount > 0 else { return 0 }
+        guard (0..<availableRegionCount).contains(regionID) else { return 0 }
+        return regionID
+    }
+
+    private func sanitizedStatus(_ status: Status, fallback: Status) -> Status {
+        var sanitized = status
+        sanitized.currRegion = clampedRegionID(status.currRegion)
+        return sanitized
+    }
+
+    private func shouldAcceptRadioStatusEvent(_ status: Status, currentState: RadioState) -> Bool {
+        if !status.isPowerOn && currentState.status.isPowerOn {
+            return false
+        }
+
+        let regionCount = max(currentState.regionNames.count, currentState.deviceInfo.regionCount)
+        if regionCount > 0 && !(0..<regionCount).contains(status.currRegion) {
+            return false
+        }
+
+        if !isValidChannelID(status.currChID, deviceInfo: currentState.deviceInfo) {
+            return false
+        }
+
+        return true
+    }
     
     /// Channels for current region
     public var channelsForCurrentRegion: [Channel] {
         guard let state = state else { return [] }
-        let regionDict = channels[state.status.currRegion] ?? [:]
+        let regionDict = channels[clampedRegionID(state.status.currRegion)] ?? [:]
         return regionDict.values.sorted { $0.channelID < $1.channelID }
     }
     
@@ -53,6 +87,21 @@ public class RadioController: ObservableObject {
     /// Settings
     public var settings: Settings {
         return state?.settings ?? Settings.empty()
+    }
+
+    /// Refresh settings from the radio and update local state.
+    @discardableResult
+    public func refreshSettings() async throws -> Settings {
+        let refreshedSettings = try await connection.getSettings()
+
+        if var currentState = state {
+            currentState.settings = refreshedSettings
+            await MainActor.run {
+                self.state = currentState
+            }
+        }
+
+        return refreshedSettings
     }
     
     /// Status
@@ -145,7 +194,7 @@ public class RadioController: ObservableObject {
         let activeDeviceInfo = deviceInfo ?? self.deviceInfo
         var activeStatus = status ?? self.status
         
-        let currentRegion = regionID ?? activeStatus.currRegion
+        let currentRegion = clampedRegionID(regionID ?? activeStatus.currRegion, regionCount: activeDeviceInfo.regionCount)
         activeStatus.currRegion = currentRegion
         var regionDict: [Int: Channel] = [:]
         
@@ -213,10 +262,14 @@ public class RadioController: ObservableObject {
         Task { @MainActor in
             switch event {
             case .statusChanged(let status):
-                currentState.status = status
+                currentState.status = sanitizedStatus(status, fallback: currentState.status)
                 self.state = currentState
             case .radioStatusChanged(let status):
-                currentState.status = status
+                guard shouldAcceptRadioStatusEvent(status, currentState: currentState) else {
+                    print("RadioController: ignoring implausible radioStatusChanged event \(status)")
+                    return
+                }
+                currentState.status = sanitizedStatus(status, fallback: currentState.status)
                 self.state = currentState
             case .channelChanged(let channel):
                 // Update channel in the appropriate region

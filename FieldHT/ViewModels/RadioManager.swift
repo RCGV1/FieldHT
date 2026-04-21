@@ -82,6 +82,16 @@ public class RadioManager: ObservableObject {
     var isTransmitting: Bool { radioController?.state?.status.isInTx ?? false }
     var isReceiving: Bool { radioController?.state?.status.isInRx ?? false }
     var rssi: Int { Int(radioController?.state?.status.rssi ?? 0) }
+    var currentReceivingChannelID: Int? {
+        guard isReceiving, let status = currentStatus else { return nil }
+
+        let channelID = status.currChID
+        if channelID >= 0 {
+            return channelID
+        }
+
+        return nil
+    }
     var activeChannel: ChannelType { 
         if let val = radioController?.state?.settings.doubleChannel {
             return ChannelType.fromProtocolValue(val)
@@ -89,14 +99,48 @@ public class RadioManager: ObservableObject {
         return .off
     }
     var currChIDUpper: Int { radioController?.state?.status.currChIDUpper ?? 0 }
-    var isScanning: Bool { radioController?.state?.settings.scan ?? false }
+    var isScanning: Bool {
+        if let scanStateOverride {
+            return scanStateOverride
+        }
+        if let settingsScan = radioController?.state?.settings.scan {
+            return settingsScan
+        }
+        return radioController?.state?.status.isScan ?? false
+    }
+
+    var effectiveMonitorMode: ChannelType {
+        if isScanning {
+            return .off
+        }
+        if let val = radioController?.state?.settings.doubleChannel {
+            return ChannelType.fromProtocolValue(val)
+        }
+        return .off
+    }
+
+    var monitorModeLabel: String {
+        if isScanning {
+            return "Scanning"
+        }
+        return isDualWatchOn ? "Dual Monitor" : "Single Watch"
+    }
+
+    var monitorModeSystemImage: String {
+        if isScanning {
+            return "dot.radiowaves.left.and.right"
+        }
+        return isDualWatchOn ? "rectangle.split.2x1.fill" : "rectangle"
+    }
 
     
     @Published public var batteryVoltage: Double = 0.0
     @Published public var batteryLevel: Int = 0
     @Published public var hmBatteryLevel: Int = 0
+    @Published private var scanStateOverride: Bool?
     private var hasNotifiedLowBattery = false
     private var lastSpeakerMicEvidenceAt: Date?
+    private var scanReturnDoubleChannel: Int?
     
     @Published public var isBusy: Bool = false
     @Published public var errorMessage: String?
@@ -163,6 +207,23 @@ public class RadioManager: ObservableObject {
                 UserDefaults.standard.removeObject(forKey: lastSpeakerMicDeviceKey)
             }
         }
+    }
+
+    public func forgetLastPairedRadio() {
+        let savedUUID = lastPairedDeviceUUID
+
+        autoReconnectEnabled = false
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        isAutoReconnecting = false
+        reconnectAttempt = 0
+        lastPairedDeviceUUID = nil
+
+        guard savedUUID == connectionControllerDeviceUUID else {
+            return
+        }
+
+        disconnect()
     }
     
     /// Connect to a radio device
@@ -235,6 +296,14 @@ public class RadioManager: ObservableObject {
         radio.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
+                if let override = self?.scanStateOverride {
+                    let reportedScan =
+                        radio.state?.settings.scan ??
+                        radio.state?.status.isScan
+                    if reportedScan == override {
+                        self?.scanStateOverride = nil
+                    }
+                }
                 self?.refreshSpeakerMicEvidenceFromStatus()
                 self?.objectWillChange.send()
             }
@@ -281,6 +350,8 @@ public class RadioManager: ObservableObject {
                 self.isSpeakerMicConnecting = false
                 self.hmBatteryLevel = 0
                 self.lastSpeakerMicEvidenceAt = nil
+                self.scanStateOverride = nil
+                self.scanReturnDoubleChannel = nil
             }
         }
     }
@@ -310,6 +381,8 @@ public class RadioManager: ObservableObject {
         isConnected = false
         isConnecting = false
         isSpeakerMicConnecting = false
+        scanStateOverride = nil
+        scanReturnDoubleChannel = nil
 
         if let error {
             connectionError = error.localizedDescription
@@ -590,7 +663,7 @@ public class RadioManager: ObservableObject {
     // MARK: - Actions
     
     var isDualWatchOn: Bool {
-        return doubleChannel != ChannelType.off.toProtocolValue()
+        return effectiveMonitorMode != .off
     }
 
     func setDualWatch(_ isOn: Bool) {
@@ -617,20 +690,65 @@ public class RadioManager: ObservableObject {
     // MARK: - Scanning Control
     
     public func toggleScan() {
-        print("RadioManager: toggleScan()")
-        guard let controller = radioController else {
-            print("RadioManager: No controller!")
+        setScanning(!isScanning)
+    }
+
+    public func setScanning(_ shouldScan: Bool) {
+        print("RadioManager: setScanning(\(shouldScan))")
+        guard let controller = radioController,
+              controller.state?.settings != nil else {
+            print("RadioManager: No controller or state!")
             return
         }
+        guard shouldScan != isScanning else { return }
+
+        let previousSettings = controller.state?.settings ?? .empty()
+        if shouldScan {
+            scanReturnDoubleChannel = previousSettings.doubleChannel
+        }
+
         isBusy = true
+        scanStateOverride = shouldScan
         Task {
             do {
-                try await controller.toggleScan()
-                print("RadioManager: Scan toggled successfully")
+                var updatedSettings = try await controller.refreshSettings()
+                updatedSettings.scan = shouldScan
+
+                var modeTask: Task<Void, Never>?
+                if shouldScan {
+                    updatedSettings.doubleChannel = ChannelType.off.toProtocolValue()
+                    modeTask = Task {
+                        try? await controller.setRadioMode(0)
+                    }
+                } else if let returnMode = scanReturnDoubleChannel {
+                    updatedSettings.doubleChannel = returnMode
+                    modeTask = Task {
+                        try? await controller.setRadioMode(0)
+                    }
+                }
+
+                print("RadioManager: Scan write settings channelA=\(updatedSettings.channelA) channelB=\(updatedSettings.channelB) scan=\(updatedSettings.scan) doubleChannel=\(updatedSettings.doubleChannel)")
+
+                try await controller.setSettings(updatedSettings)
+                await modeTask?.value
+
+                if !shouldScan {
+                    scanReturnDoubleChannel = nil
+                }
+
+                if controller.state?.status.isScan == shouldScan || controller.state?.settings.scan == shouldScan {
+                    scanStateOverride = nil
+                }
+
+                print("RadioManager: Scan state updated successfully")
                 isBusy = false
             } catch {
-                print("RadioManager: Failed to toggle scan: \(error)")
-                errorMessage = "Failed to toggle scan: \(error.localizedDescription)"
+                if shouldScan {
+                    scanReturnDoubleChannel = nil
+                }
+                scanStateOverride = nil
+                print("RadioManager: Failed to set scan state: \(error)")
+                errorMessage = "Failed to set scan state: \(error.localizedDescription)"
                 isBusy = false
             }
         }

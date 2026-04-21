@@ -608,6 +608,7 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
             let tones = selectedTonesFromFrequencyOption()
             maybeSendSatModeInfo(radioManager: radioManager, force: true)
             radioManager.setFreqModeParameters(rxMHz: rx, txMHz: tx, rxCTCSSHz: tones.rx, txCTCSSHz: tones.tx)
+            syncActiveVFOForSatelliteMode(radioManager: radioManager, rxMHz: rx, txMHz: tx)
             return
         }
 
@@ -640,6 +641,7 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
                 lastAutoAppliedRxMHz = rx
                 let tones = selectedTonesFromFrequencyOption()
                 radioManager.setFreqModeParameters(rxMHz: rx, txMHz: tx, rxCTCSSHz: tones.rx, txCTCSSHz: tones.tx)
+                syncActiveVFOForSatelliteMode(radioManager: radioManager, rxMHz: rx, txMHz: tx)
             }
             return
         }
@@ -1012,6 +1014,7 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
         let (rx, tx) = currentRxTxForSync()
         let tones = selectedTonesFromFrequencyOption()
         radioManager.setFreqModeParameters(rxMHz: rx, txMHz: tx, rxCTCSSHz: tones.rx, txCTCSSHz: tones.tx)
+        syncActiveVFOForSatelliteMode(radioManager: radioManager, rxMHz: rx, txMHz: tx)
     }
 
     private func currentRxTxForSync() -> (rx: Double, tx: Double) {
@@ -1035,6 +1038,18 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
         if key == lastToneWriteKey { return }
         lastToneWriteKey = key
 
+        radioManager.setSplitFrequencyAndCTCSS(
+            rxMHz: rxMHz,
+            txMHz: txMHz,
+            rxCTCSSHz: tones.rx,
+            txCTCSSHz: tones.tx,
+            for: applyChannel
+        )
+    }
+
+    private func syncActiveVFOForSatelliteMode(radioManager: RadioManager, rxMHz: Double, txMHz: Double) {
+        let applyChannel: ChannelType = (radioManager.activeChannel == .off) ? .a : radioManager.activeChannel
+        let tones = selectedTonesFromFrequencyOption()
         radioManager.setSplitFrequencyAndCTCSS(
             rxMHz: rxMHz,
             txMHz: txMHz,
@@ -1397,6 +1412,19 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
 
     var hasMoreFrequencyOptions: Bool {
         allFrequencyOptions.count > Self.defaultFrequencyOptionLimit
+    }
+
+    var selectableFrequencyOptions: [SatFrequencyOption] {
+        let custom = SatFrequencyOption(
+            id: "custom",
+            title: "Custom",
+            rxMHz: nominalRxMHz,
+            txMHz: nominalTxMHz,
+            rxCTCSSHz: nil,
+            txCTCSSHz: nil,
+            isCustom: true
+        )
+        return allFrequencyOptions + [custom]
     }
 
     private func applySelectedFrequencyOptionToNominal() {

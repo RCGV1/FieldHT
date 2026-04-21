@@ -22,12 +22,23 @@ struct ConnectView: View {
         return scanner.knownDevice(for: uuid)
     }
 
+    private var hasSavedRadio: Bool {
+        radioManager.lastPairedDeviceUUID != nil
+    }
+
+    private var savedRadioName: String {
+        savedDevice?.name ?? "Saved radio"
+    }
+
     private var connectedDeviceName: String {
         if let selectedDevice {
             return selectedDevice.name
         }
         if let savedDevice {
             return savedDevice.name
+        }
+        if hasSavedRadio {
+            return savedRadioName
         }
         return "Your radio"
     }
@@ -43,7 +54,7 @@ struct ConnectView: View {
         if radioManager.isConnected {
             return "Connected Radio"
         }
-        if savedDevice != nil {
+        if hasSavedRadio {
             return "Saved Radio"
         }
         return "Radio"
@@ -62,6 +73,9 @@ struct ConnectView: View {
         if let savedDevice {
             return savedDevice.name
         }
+        if hasSavedRadio {
+            return savedRadioName
+        }
         return "Connect your radio"
     }
 
@@ -75,8 +89,8 @@ struct ConnectView: View {
         if radioManager.isConnecting {
             return "Opening the Bluetooth link."
         }
-        if savedDevice != nil {
-            return "Reconnect in one tap or scan for a different radio nearby."
+        if hasSavedRadio {
+            return "Reconnect in one tap, forget this radio, or scan for a different one nearby."
         }
         return "Scan nearby radios, then put your radio into pairing and tap it to connect."
     }
@@ -112,7 +126,7 @@ struct ConnectView: View {
     }
 
     private var shouldShowHeaderScanAction: Bool {
-        !radioManager.isConnected && (savedDevice != nil || !nearbyDevices.isEmpty)
+        !radioManager.isConnected && (hasSavedRadio || !nearbyDevices.isEmpty)
     }
 
     var body: some View {
@@ -169,8 +183,9 @@ struct ConnectView: View {
         )
     }
 
+    @ViewBuilder
     private var heroCard: some View {
-        card {
+        let content = card {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .top, spacing: 14) {
                     ZStack {
@@ -224,27 +239,22 @@ struct ConnectView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(accentOrange)
                     .disabled(true)
-                } else if let savedDevice {
+                } else if hasSavedRadio {
                     ViewThatFits {
                         HStack(spacing: 10) {
-                            connectButton(for: savedDevice, title: "Connect \(savedDevice.name)")
+                            if let savedDevice {
+                                connectButton(for: savedDevice, title: "Connect \(savedDevice.name)")
+                            }
                             scanButton(title: "Scan Nearby")
                         }
 
                         VStack(spacing: 10) {
-                            connectButton(for: savedDevice, title: "Connect \(savedDevice.name)")
+                            if let savedDevice {
+                                connectButton(for: savedDevice, title: "Connect \(savedDevice.name)")
+                            }
                             scanButton(title: "Scan Nearby")
                         }
                     }
-
-                    Button("Forget Saved Radio", role: .destructive) {
-                        scanner.clearLastPairedDevice()
-                        if selectedDevice?.id == savedDevice.id {
-                            selectedDevice = nil
-                        }
-                    }
-                    .font(.footnote.weight(.semibold))
-                    .buttonStyle(.plain)
                 } else {
                     scanButton(title: "Scan Nearby Radios")
                 }
@@ -254,6 +264,17 @@ struct ConnectView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+
+        if !radioManager.isConnected && !isBusy && hasSavedRadio {
+            SwipeActionCard(
+                content: content,
+                actionLabel: "Forget",
+                actionSystemImage: "trash",
+                action: forgetSavedRadio
+            )
+        } else {
+            content
         }
     }
 
@@ -525,11 +546,96 @@ struct ConnectView: View {
             }
         }
     }
+
+    private func forgetSavedRadio() {
+        let savedUUID = radioManager.lastPairedDeviceUUID
+
+        radioManager.forgetLastPairedRadio()
+        scanner.clearLastPairedDevice()
+
+        if selectedDevice?.id == savedUUID {
+            selectedDevice = nil
+        }
+    }
 }
 
 #Preview {
     NavigationStack {
         ConnectView()
             .environmentObject(RadioManager())
+    }
+}
+
+private struct SwipeActionCard<Content: View>: View {
+    let content: Content
+    let actionLabel: String
+    let actionSystemImage: String
+    let action: () -> Void
+
+    @State private var offsetX: CGFloat = 0
+
+    private let revealWidth: CGFloat = 104
+
+    init(
+        content: Content,
+        actionLabel: String,
+        actionSystemImage: String,
+        action: @escaping () -> Void
+    ) {
+        self.content = content
+        self.actionLabel = actionLabel
+        self.actionSystemImage = actionSystemImage
+        self.action = action
+    }
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            Button(role: .destructive) {
+                withAnimation(.snappy(duration: 0.2)) {
+                    offsetX = 0
+                }
+                action()
+            } label: {
+                VStack(spacing: 6) {
+                    Image(systemName: actionSystemImage)
+                        .font(.headline)
+                    Text(actionLabel)
+                        .font(.footnote.weight(.semibold))
+                }
+                .frame(width: revealWidth)
+                .frame(maxHeight: .infinity)
+                .foregroundStyle(.white)
+                .padding(.vertical, 22)
+            }
+            .buttonStyle(.plain)
+            .background(Color.red, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+
+            content
+                .offset(x: offsetX)
+                .gesture(
+                    DragGesture(minimumDistance: 8)
+                        .onChanged { value in
+                            let proposedOffset = value.translation.width
+                            offsetX = min(0, max(-revealWidth, proposedOffset))
+                        }
+                        .onEnded { value in
+                            withAnimation(.snappy(duration: 0.2)) {
+                                if value.translation.width < -(revealWidth * 0.45) {
+                                    offsetX = -revealWidth
+                                } else {
+                                    offsetX = 0
+                                }
+                            }
+                        }
+                )
+                .onTapGesture {
+                    if offsetX != 0 {
+                        withAnimation(.snappy(duration: 0.2)) {
+                            offsetX = 0
+                        }
+                    }
+                }
+        }
+        .clipped()
     }
 }

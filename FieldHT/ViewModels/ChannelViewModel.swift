@@ -22,6 +22,11 @@ public class ChannelViewModel: ObservableObject {
     private var hydrationTask: Task<Void, Never>?
     
     public init() {}
+
+    private func clampedRegionIndex(_ regionIndex: Int, regionCount: Int) -> Int {
+        guard regionCount > 0 else { return 0 }
+        return min(max(regionIndex, 0), regionCount - 1)
+    }
     
     /// Set the radio controller and load channels
     public func setRadioController(_ controller: RadioController?) {
@@ -64,7 +69,7 @@ public class ChannelViewModel: ObservableObject {
             regions = controller.regionNames
             
             // Get active region from status
-            activeRegionIndex = controller.status.currRegion
+            activeRegionIndex = clampedRegionIndex(controller.status.currRegion, regionCount: regions.count)
             
             isLoading = false
             print("ChannelViewModel: Loaded \(channels.count) channels and \(regions.count) regions. Active Region: \(activeRegionIndex)")
@@ -108,7 +113,7 @@ public class ChannelViewModel: ObservableObject {
                 // Always refresh data if likely changed
                 self.channels = controller.channelsForCurrentRegion
                 self.regions = controller.regionNames
-                self.activeRegionIndex = controller.status.currRegion
+                self.activeRegionIndex = self.clampedRegionIndex(controller.status.currRegion, regionCount: self.regions.count)
             }
         }
     }
@@ -136,7 +141,7 @@ public class ChannelViewModel: ObservableObject {
                     self.isSaving = false
                     // Update list from controller (which updated local state)
                     self.channels = radioController.channelsForCurrentRegion
-                    self.activeRegionIndex = radioController.status.currRegion
+                    self.activeRegionIndex = self.clampedRegionIndex(radioController.status.currRegion, regionCount: self.regions.count)
                 }
             } catch {
                 await MainActor.run {

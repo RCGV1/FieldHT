@@ -176,7 +176,8 @@ def iter_pklg_records(path: Path) -> Iterable[bytes]:
     blob = path.read_bytes()
     pos = 0
     while pos + 4 <= len(blob):
-        record_len = int.from_bytes(blob[pos : pos + 4], "big")
+        # PacketLogger stores record lengths as little-endian 32-bit integers.
+        record_len = int.from_bytes(blob[pos : pos + 4], "little")
         if record_len <= 0 or pos + 4 + record_len > len(blob):
             break
         yield blob[pos + 4 : pos + 4 + record_len]
@@ -400,7 +401,12 @@ def connection_score(frames: list[ProtocolFrame], connection_handle: int) -> tup
     scoped = [frame for frame in frames if frame.connection_handle == connection_handle]
     commands = Counter(frame.command for frame in scoped)
     score = (
-        commands[5] * 40
+        commands[11] * 60
+        + commands[25] * 60
+        + commands[13] * 20
+        + commands[24] * 15
+        + commands[36] * 15
+        + commands[5] * 40
         + commands[55] * 50
         + commands[75] * 50
         + commands[9] * 20

@@ -10,6 +10,7 @@ struct SatelliteTrackingView: View {
     @State private var pendingRecenterSatId: Int?
     @State private var isMapExpanded = false
     @State private var showingSearch = false
+    @State private var showingFrequencyPlans = false
     @State private var libraryShelf: LibraryShelf = .ready
 
     private enum LibraryShelf: String, CaseIterable, Identifiable {
@@ -564,13 +565,8 @@ struct SatelliteTrackingView: View {
             subtitle: "Keep one clean frequency plan in view while the Doppler engine updates the live values."
         ) {
             VStack(alignment: .leading, spacing: 14) {
-                Menu {
-                    Picker("Frequency plan", selection: $vm.selectedFrequencyOptionId) {
-                        ForEach(vm.frequencyOptions) { option in
-                            Text(option.title)
-                                .tag(option.id)
-                        }
-                    }
+                Button {
+                    showingFrequencyPlans = true
                 } label: {
                     HStack(alignment: .top, spacing: 12) {
                         VStack(alignment: .leading, spacing: 6) {
@@ -603,6 +599,52 @@ struct SatelliteTrackingView: View {
                     .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
                 .buttonStyle(.plain)
+                .sheet(isPresented: $showingFrequencyPlans) {
+                    NavigationStack {
+                        List {
+                            ForEach(vm.selectableFrequencyOptions) { option in
+                                Button {
+                                    vm.selectedFrequencyOptionId = option.id
+                                    showingFrequencyPlans = false
+                                } label: {
+                                    HStack(alignment: .top, spacing: 12) {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(option.title)
+                                                .foregroundStyle(.primary)
+                                            if let rx = option.rxMHz, let tx = option.txMHz {
+                                                Text(String(format: "RX %.5f  TX %.5f", rx, tx))
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                            } else if let rx = option.rxMHz {
+                                                Text(String(format: "RX %.5f", rx))
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                            } else if let tx = option.txMHz {
+                                                Text(String(format: "TX %.5f", tx))
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                        }
+                                        Spacer()
+                                        if vm.selectedFrequencyOptionId == option.id {
+                                            Image(systemName: "checkmark")
+                                                .foregroundStyle(accentOrange)
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .navigationTitle("Frequency Plans")
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("Done") {
+                                    showingFrequencyPlans = false
+                                }
+                            }
+                        }
+                    }
+                }
 
                 ViewThatFits {
                     HStack(spacing: 12) {
