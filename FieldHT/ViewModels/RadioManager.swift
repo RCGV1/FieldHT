@@ -141,6 +141,8 @@ public class RadioManager: ObservableObject {
     private var hasNotifiedLowBattery = false
     private var lastSpeakerMicEvidenceAt: Date?
     private var scanReturnDoubleChannel: Int?
+    private var lastMemoryChannelAIndex: Int?
+    private var lastMemoryChannelBIndex: Int?
     
     @Published public var isBusy: Bool = false
     @Published public var errorMessage: String?
@@ -352,6 +354,8 @@ public class RadioManager: ObservableObject {
                 self.lastSpeakerMicEvidenceAt = nil
                 self.scanStateOverride = nil
                 self.scanReturnDoubleChannel = nil
+                self.lastMemoryChannelAIndex = nil
+                self.lastMemoryChannelBIndex = nil
             }
         }
     }
@@ -383,6 +387,8 @@ public class RadioManager: ObservableObject {
         isSpeakerMicConnecting = false
         scanStateOverride = nil
         scanReturnDoubleChannel = nil
+        lastMemoryChannelAIndex = nil
+        lastMemoryChannelBIndex = nil
 
         if let error {
             connectionError = error.localizedDescription
@@ -762,6 +768,9 @@ public class RadioManager: ObservableObject {
             print("RadioManager: No controller or state!")
             return
         }
+        if index < 250 {
+            lastMemoryChannelAIndex = index
+        }
         isBusy = true
         Task {
             do {
@@ -779,6 +788,9 @@ public class RadioManager: ObservableObject {
     
     public func setChannelB(_ index: Int) {
         guard let controller = radioController, var settings = controller.state?.settings else { return }
+        if index < 250 {
+            lastMemoryChannelBIndex = index
+        }
         isBusy = true
         Task {
             do {
@@ -872,17 +884,43 @@ public class RadioManager: ObservableObject {
         
         if channel == .a {
             if isVFOA {
-                setChannelA(0) 
+                setChannelA(restoredMemoryChannelIndex(for: .a))
             } else {
                 setChannelA(vfoIndex)
             }
         } else if channel == .b {
              if isVFOB {
-                setChannelB(0)
+                setChannelB(restoredMemoryChannelIndex(for: .b))
             } else {
                 setChannelB(vfoIndex - 1) // confirmed on 251
             }
         }
+    }
+
+    private func restoredMemoryChannelIndex(for channel: ChannelType) -> Int {
+        let rememberedIndex: Int?
+        let currentIndex: Int
+
+        switch channel {
+        case .a:
+            rememberedIndex = lastMemoryChannelAIndex
+            currentIndex = vfoAIndex
+        case .b:
+            rememberedIndex = lastMemoryChannelBIndex
+            currentIndex = vfoBIndex
+        case .off:
+            return 0
+        }
+
+        if let rememberedIndex, rememberedIndex < 250 {
+            return rememberedIndex
+        }
+
+        if currentIndex < 250 {
+            return currentIndex
+        }
+
+        return 0
     }
     
     /// Get calculated VFO Frequency in MHz
