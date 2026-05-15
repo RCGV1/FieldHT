@@ -71,6 +71,10 @@ public class BLEConnection: NSObject {
 
     private var restorePendingServiceDiscovery: Bool = false
     private var isDiscoveringServices: Bool = false
+    private var connectAttemptStartedAt: Date?
+    private var lastConnectedAt: Date?
+    private var serviceDiscoveryStartedAt: Date?
+    private var characteristicDiscoveryStartedAt: Date?
     
     public weak var radioManager: RadioManager?
 
@@ -122,6 +126,13 @@ public class BLEConnection: NSObject {
 
                 self.didRequestDisconnect = false
                 self.didReachReadyState = false
+                self.connectAttemptStartedAt = Date()
+                self.lastConnectedAt = nil
+                self.serviceDiscoveryStartedAt = nil
+                self.characteristicDiscoveryStartedAt = nil
+                self.recordCaptureNote(category: "connect_attempt_started", message: "Starting BLE connect attempt", fields: [
+                    "device_uuid": self.deviceUUID.uuidString
+                ])
                 self.connectContinuation = continuation
                 self.startConnectTimeout(seconds: 20)
                 self.beginConnectFlowIfPossible()
@@ -215,6 +226,10 @@ public class BLEConnection: NSObject {
 
         restorePendingServiceDiscovery = false
         isDiscoveringServices = false
+        connectAttemptStartedAt = nil
+        lastConnectedAt = nil
+        serviceDiscoveryStartedAt = nil
+        characteristicDiscoveryStartedAt = nil
 
         peripheral?.delegate = nil
         peripheral = nil
@@ -240,6 +255,11 @@ public class BLEConnection: NSObject {
         }
     }
 
+    private func millisecondsSince(_ startedAt: Date?) -> String {
+        guard let startedAt else { return "0" }
+        return String(Int(Date().timeIntervalSince(startedAt) * 1000.0))
+    }
+
     private func beginConnectFlowIfPossible() {
         guard connectContinuation != nil else { return }
 
@@ -252,14 +272,23 @@ public class BLEConnection: NSObject {
 
                 if peripheral.state == .connected {
                     // Common after state restoration or if the system kept the link alive.
+                    recordCaptureNote(category: "connect_resume_existing", message: "Reusing existing BLE connection", fields: [
+                        "device_uuid": peripheral.identifier.uuidString
+                    ])
                     startServiceDiscoveryIfPossible()
                 } else {
+                    recordCaptureNote(category: "connect_using_retrieved_peripheral", message: "Connecting using retrieved peripheral", fields: [
+                        "device_uuid": peripheral.identifier.uuidString
+                    ])
                     centralManager.connect(peripheral, options: [
                         CBConnectPeripheralOptionNotifyOnDisconnectionKey: true
                     ])
                 }
             } else {
                 // Scan for all peripherals since filtering by service UUID may not work reliably.
+                recordCaptureNote(category: "connect_scan_started", message: "Scanning for target peripheral", fields: [
+                    "device_uuid": deviceUUID.uuidString
+                ])
                 centralManager.scanForPeripherals(withServices: nil, options: nil)
             }
 
@@ -293,6 +322,10 @@ public class BLEConnection: NSObject {
 
         isDiscoveringServices = true
         restorePendingServiceDiscovery = false
+        serviceDiscoveryStartedAt = Date()
+        recordCaptureNote(category: "service_discovery_started", message: "Starting service discovery", fields: [
+            "device_uuid": peripheral.identifier.uuidString
+        ])
         peripheral.discoverServices([radioServiceUUID])
     }
 
@@ -449,6 +482,7 @@ extension BLEConnection: CBCentralManagerDelegate {
         didConnect peripheral: CBPeripheral
     ) {
         print("BLE: didConnect peripheral \(peripheral.identifier.uuidString)")
+        lastConnectedAt = Date()
         recordCaptureNote(category: "connect", message: "Connected peripheral", fields: ["peripheral": peripheral.identifier.uuidString])
         connectTimeoutTask?.cancel()
         connectTimeoutTask = nil
@@ -492,7 +526,8 @@ extension BLEConnection: CBCentralManagerDelegate {
             "ready": String(wasReady),
             "hadConnect": String(hadConnect),
             "hadDisconnect": String(hadDisconnect),
-            "error": error?.localizedDescription ?? "nil"
+            "error": error?.localizedDescription ?? "nil",
+            "connected_ms": millisecondsSince(lastConnectedAt)
         ])
 
         if hadConnect {
@@ -555,6 +590,7 @@ extension BLEConnection: CBPeripheralDelegate {
         }
 
         print("BLE: Found radio service UUID: \(radioService.uuid.uuidString), discovering characteristics...")
+        characteristicDiscoveryStartedAt = Date()
         recordCaptureNote(category: "radio_service", message: "Found radio service", fields: ["uuid": radioService.uuid.uuidString])
         peripheral.discoverCharacteristics(
             [radioWriteUUID, radioIndicateUUID, radioAuxUUID],
@@ -618,6 +654,12 @@ extension BLEConnection: CBPeripheralDelegate {
 
         if writeCharacteristic != nil && indicateCharacteristic != nil {
             print("BLE: All required characteristics found. Connection complete.")
+            recordCaptureNote(category: "connect_ready", message: "BLE transport ready", fields: [
+                "device_uuid": peripheral.identifier.uuidString,
+                "total_ms": millisecondsSince(connectAttemptStartedAt),
+                "service_ms": millisecondsSince(serviceDiscoveryStartedAt),
+                "characteristic_ms": millisecondsSince(characteristicDiscoveryStartedAt)
+            ])
             connectTimeoutTask?.cancel()
             connectTimeoutTask = nil
             didReachReadyState = true

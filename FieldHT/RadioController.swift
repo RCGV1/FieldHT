@@ -7,6 +7,8 @@ public class RadioController: ObservableObject {
     
     @Published public private(set) var state: RadioState?
     private var channels: [Int: [Int: Channel]] = [:] // regionID -> channelID -> Channel
+    private var backgroundHydrationTask: Task<Void, Never>?
+    private var removeConnectionEventHandler: (() -> Void)?
     
     private init(connection: CommandConnection) {
         self.connection = connection
@@ -72,6 +74,12 @@ public class RadioController: ObservableObject {
         let regionDict = channels[clampedRegionID(state.status.currRegion)] ?? [:]
         return regionDict.values.sorted { $0.channelID < $1.channelID }
     }
+
+    /// Get one channel by its radio slot ID from the current region.
+    public func channel(channelID: Int) -> Channel? {
+        guard let state = state else { return nil }
+        return channels[clampedRegionID(state.status.currRegion)]?[channelID]
+    }
     
     /// Get channels for a specific region
     public func channels(forRegion regionID: Int) -> [Channel] {
@@ -128,9 +136,25 @@ public class RadioController: ObservableObject {
     
     /// Disconnect from the radio
     public func disconnect() async {
+        backgroundHydrationTask?.cancel()
+        backgroundHydrationTask = nil
+        removeConnectionEventHandler?()
+        removeConnectionEventHandler = nil
         await connection.disconnect()
         await MainActor.run {
             state = nil
+        }
+        channels.removeAll()
+    }
+
+    public func handleTransportDidDisconnect() {
+        backgroundHydrationTask?.cancel()
+        backgroundHydrationTask = nil
+        removeConnectionEventHandler?()
+        removeConnectionEventHandler = nil
+
+        Task { @MainActor in
+            self.state = nil
         }
         channels.removeAll()
     }
@@ -140,58 +164,67 @@ public class RadioController: ObservableObject {
         let deviceInfo = try await connection.getDeviceInfo()
         let settings = try await connection.getSettings()
         let status = try await connection.getStatus()
-        
-        let regionNames = try await hydrateChannels(deviceInfo: deviceInfo, status: status)
-        
-        // Load beacon settings with a 1-second timeout — don't block hydration.
-        // Use a typed task so we await the result safely instead of mutating a shared local var.
-        let beaconTask = Task<BeaconSettings, Error> {
-            return try await connection.getBeaconSettings()
-        }
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-        beaconTask.cancel()
-        let beaconSettings = (try? await beaconTask.value) ?? BeaconSettings.empty()
 
-        // Register event handler if not already done
-        _ = connection.addEventHandler { [weak self] event in
+        removeConnectionEventHandler?()
+        removeConnectionEventHandler = connection.addEventHandler { [weak self] event in
             self?.handleEvent(event)
         }
-        
+
         for eventType in [
             EventType.htStatusChanged,
             .htChChanged,
             .htSettingsChanged,
             .radioStatusChanged,
-            .userAction,
-            .systemEvent,
-            .bssSettingsChanged,
-            .positionChanged,
-            .dataRxd,
-            .dataTxd,
-            .newInquiryData,
-            .restoreFactorySettings,
-            .ringingStopped
+            .bssSettingsChanged
         ] {
             try? await connection.enableEvent(eventType)
         }
 
-        do {
-            try await connection.syncTime()
-            print("RadioController: synced radio time")
-        } catch {
-            print("RadioController: failed to sync radio time: \(error)")
-        }
-        
-        // Initialize state
+        let regionNames = Self.placeholderRegionNames(regionCount: deviceInfo.regionCount)
+        await hydrateSelectedChannels(deviceInfo: deviceInfo, settings: settings, status: status)
+
         let newState = RadioState(
             deviceInfo: deviceInfo,
-            beaconSettings: beaconSettings,
+            beaconSettings: BeaconSettings.empty(),
             status: status,
             settings: settings,
             regionNames: regionNames
         )
         await MainActor.run {
             self.state = newState
+        }
+
+        startBackgroundHydration(deviceInfo: deviceInfo, status: status)
+    }
+
+    private func hydrateSelectedChannels(deviceInfo: DeviceInfo, settings: Settings, status: Status) async {
+        let startedAt = Date()
+        let currentRegion = clampedRegionID(status.currRegion, regionCount: deviceInfo.regionCount)
+        var regionDict = channels[currentRegion] ?? [:]
+        let channelIDs = Set([settings.channelA, settings.channelB, status.currChID])
+            .filter { isValidChannelID($0, deviceInfo: deviceInfo) }
+
+        for channelID in channelIDs.sorted() {
+            do {
+                let channel = try await connection.getChannel(channelID)
+                regionDict[channel.channelID] = channel
+            } catch {
+                print("RadioController: failed to hydrate selected channel \(channelID): \(error)")
+            }
+        }
+
+        channels[currentRegion] = regionDict
+
+        if BLECaptureStore.isEnabled {
+            await BLECaptureStore.shared.recordNote(
+                category: "selected_channels_hydrated",
+                message: "Hydrated selected channels before first connected UI render",
+                fields: [
+                    "channel_ids": channelIDs.sorted().map(String.init).joined(separator: ","),
+                    "elapsed_ms": String(Int(Date().timeIntervalSince(startedAt) * 1000.0)),
+                    "region_id": String(currentRegion)
+                ]
+            )
         }
     }
     
@@ -203,7 +236,7 @@ public class RadioController: ObservableObject {
         
         let currentRegion = clampedRegionID(regionID ?? activeStatus.currRegion, regionCount: activeDeviceInfo.regionCount)
         activeStatus.currRegion = currentRegion
-        var regionDict: [Int: Channel] = [:]
+        var regionDict = channels[currentRegion] ?? [:]
         
         // Load region memory slots
         let maxChannelsToLoad = min(30, activeDeviceInfo.channelCount)
@@ -249,6 +282,88 @@ public class RadioController: ObservableObject {
         }
         
         return regionNames
+    }
+
+    private func startBackgroundHydration(deviceInfo: DeviceInfo, status: Status) {
+        backgroundHydrationTask?.cancel()
+        backgroundHydrationTask = Task { [weak self] in
+            guard let self else { return }
+
+            let startedAt = Date()
+
+            do {
+                let beaconSettings = try await self.loadBeaconSettingsWithTimeout()
+                if Task.isCancelled { return }
+
+                if var currentState = self.state {
+                    currentState.beaconSettings = beaconSettings
+                    await MainActor.run {
+                        self.state = currentState
+                    }
+                }
+
+                for eventType in [
+                    EventType.userAction,
+                    .systemEvent,
+                    .positionChanged,
+                    .dataRxd,
+                    .dataTxd,
+                    .newInquiryData,
+                    .restoreFactorySettings,
+                    .ringingStopped
+                ] {
+                    if Task.isCancelled { return }
+                    try? await self.connection.enableEvent(eventType)
+                }
+
+                do {
+                    try await self.connection.syncTime()
+                    print("RadioController: synced radio time")
+                } catch {
+                    print("RadioController: failed to sync radio time: \(error)")
+                }
+
+                _ = try await self.hydrateChannels(deviceInfo: deviceInfo, status: status)
+                let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000.0)
+                print("RadioController: background hydration finished in \(elapsedMs)ms")
+                if BLECaptureStore.isEnabled {
+                    await BLECaptureStore.shared.recordNote(
+                        category: "background_hydration_complete",
+                        message: "Finished radio background hydration",
+                        fields: ["elapsed_ms": String(elapsedMs)]
+                    )
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                print("RadioController: background hydration failed: \(error)")
+                if BLECaptureStore.isEnabled {
+                    await BLECaptureStore.shared.recordNote(
+                        category: "background_hydration_failed",
+                        message: "Radio background hydration failed",
+                        fields: ["error": error.localizedDescription]
+                    )
+                }
+            }
+        }
+    }
+
+    private func loadBeaconSettingsWithTimeout(timeoutNanoseconds: UInt64 = 1_000_000_000) async throws -> BeaconSettings {
+        let beaconTask = Task<BeaconSettings, Error> {
+            try await connection.getBeaconSettings()
+        }
+
+        let timeoutTask = Task {
+            try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+            beaconTask.cancel()
+        }
+        defer { timeoutTask.cancel() }
+
+        return (try? await beaconTask.value) ?? BeaconSettings.empty()
+    }
+
+    private static func placeholderRegionNames(regionCount: Int) -> [String] {
+        guard regionCount > 0 else { return [] }
+        return (0..<regionCount).map { "Group \($0 + 1)" }
     }
 
     public func syncTime(_ date: Date = Date()) async throws {

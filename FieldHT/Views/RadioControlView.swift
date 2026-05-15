@@ -406,9 +406,9 @@ struct RadioControlView: View {
     // MARK: - Channel Navigation Helpers
 
     private var validChannels: [Int] {
-        radioManager.channels.enumerated()
-            .filter { $0.element.rxFreq != 0.0 }
-            .map { $0.offset }
+        radioManager.channels
+            .filter { $0.channelID < 250 && $0.rxFreq != 0.0 }
+            .map(\.channelID)
     }
 
     private var activeChannelIndex: Int {
@@ -474,7 +474,7 @@ struct VFOControl: View {
     @State private var showingEditSheet: Bool = false
 
     private var selectedChannel: Channel? {
-        channelIndex < viewModel.channels.count ? viewModel.channels[channelIndex] : nil
+        viewModel.channel(withID: channelIndex)
     }
 
     private var compactTitle: String {
@@ -518,7 +518,7 @@ struct VFOControl: View {
 
                 Button(action: onToggleVFO) {
                     HStack(spacing: 4) {
-                        Text(isVFO ? "MEM" : "VFO")
+                        Text(isVFO ? "VFO" : "MEM")
                             .font(.caption)
                             .bold()
 
@@ -527,7 +527,7 @@ struct VFOControl: View {
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 4)
-                    .background(Color.orange.opacity(0.2))
+                    .background((isVFO ? Color.orange : Color.blue).opacity(0.2))
                     .cornerRadius(4)
                 }
                 .accessibilityLabel(isVFO ? "Switch to memory mode" : "Switch to VFO mode")
@@ -555,8 +555,18 @@ struct VFOControl: View {
                     Text(String(format: "%.5f MHz", channel.rxFreq))
                         .font(.subheadline)
                         .foregroundColor(.secondary)
+                } else if viewModel.isLoading || viewModel.channels.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading channel \(channelIndex + 1)...")
+                            .foregroundColor(.secondary)
+                    }
                 } else {
-                    Text("Unknown")
+                    Text("Channel \(channelIndex + 1)")
+                        .font(.title2)
+                        .bold()
+                    Text("Not in current memory group")
                         .foregroundColor(.secondary)
                 }
             }

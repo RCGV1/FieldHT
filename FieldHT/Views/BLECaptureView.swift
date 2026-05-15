@@ -21,7 +21,7 @@ struct BLECaptureView: View {
                     }
 
                 if captureEnabled {
-                    Label("Recording raw TX/RX packets plus disconnects, service changes, decode errors, and unknown protocol payloads.", systemImage: "record.circle")
+                    Label("Recording raw TX/RX packets plus connect timing, reconnect attempts, disconnects, service changes, decode errors, and unknown protocol payloads.", systemImage: "record.circle")
                         .foregroundStyle(.secondary)
                 } else {
                     Label("Capture is off. Turn it on before reproducing an issue.", systemImage: "pause.circle")
@@ -73,7 +73,7 @@ struct BLECaptureView: View {
             } header: {
                 Label("Export", systemImage: "square.and.arrow.up")
             } footer: {
-                Text("Workflow: enable capture, reproduce the problem, then share the current capture file. The JSONL includes raw BLE packets and structured notes for disconnects, unknown packets, event payloads, and protocol decode failures.")
+                Text("Workflow: enable capture, connect to the radio, leave it running, then share the current capture file. The JSONL includes raw BLE packets, connect timing, reconnect notes, and a 10-second connection-health heartbeat. On Mac, run `python3 scripts/analyze_ble_capture.py <capture.jsonl> --prove-minutes 10` to verify a 10-minute uninterrupted run.")
             }
         }
         .navigationTitle("BLE Capture")

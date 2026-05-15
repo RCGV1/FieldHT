@@ -20,8 +20,15 @@ public class ChannelViewModel: ObservableObject {
     private var radioController: RadioController?
     private var eventHandler: (() -> Void)?
     private var hydrationTask: Task<Void, Never>?
+    private var stateCancellable: AnyCancellable?
     
     public init() {}
+
+    deinit {
+        eventHandler?()
+        stateCancellable?.cancel()
+        hydrationTask?.cancel()
+    }
 
     private func clampedRegionIndex(_ regionIndex: Int, regionCount: Int) -> Int {
         guard regionCount > 0 else { return 0 }
@@ -31,14 +38,24 @@ public class ChannelViewModel: ObservableObject {
     /// Set the radio controller and load channels
     public func setRadioController(_ controller: RadioController?) {
         print("ChannelViewModel: setRadioController called with \(controller == nil ? "nil" : "controller")")
+        eventHandler?()
+        eventHandler = nil
+        stateCancellable?.cancel()
+        stateCancellable = nil
+        hydrationTask?.cancel()
+        hydrationTask = nil
+
         radioController = controller
         
         if let controller = controller {
             loadChannels()
+            observeStateChanges(controller)
             observeChannelChanges(controller)
         } else {
             channels = []
             regions = []
+            activeRegionIndex = 0
+            isLoading = false
         }
     }
     
@@ -74,6 +91,10 @@ public class ChannelViewModel: ObservableObject {
             isLoading = false
             print("ChannelViewModel: Loaded \(channels.count) channels and \(regions.count) regions. Active Region: \(activeRegionIndex)")
         }
+    }
+
+    public func channel(withID channelID: Int) -> Channel? {
+        channels.first { $0.channelID == channelID }
     }
     
     /// Trigger a targeted channel refresh from the radio
@@ -114,6 +135,16 @@ public class ChannelViewModel: ObservableObject {
                 self.channels = controller.channelsForCurrentRegion
                 self.regions = controller.regionNames
                 self.activeRegionIndex = self.clampedRegionIndex(controller.status.currRegion, regionCount: self.regions.count)
+            }
+        }
+    }
+
+    private func observeStateChanges(_ controller: RadioController) {
+        stateCancellable = controller.$state.sink { [weak self, weak controller] _ in
+            Task { @MainActor [weak self, weak controller] in
+                await Task.yield()
+                guard let self, let controller, self.radioController === controller else { return }
+                self.loadChannels()
             }
         }
     }

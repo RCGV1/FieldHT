@@ -9,6 +9,9 @@ import Foundation
 import Combine
 import SwiftUI
 import UserNotifications
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Manages the radio connection state and provides access to radio control
 @MainActor
@@ -29,6 +32,7 @@ public class RadioManager: ObservableObject {
                 reconnectTask?.cancel()
                 reconnectTask = nil
                 isAutoReconnecting = false
+                updateIdleTimerForCapture()
             }
         }
     }
@@ -149,6 +153,7 @@ public class RadioManager: ObservableObject {
     
     private var connectionTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
+    private var connectionHealthTask: Task<Void, Never>?
     private var timer: Timer?
     private var cancellables = Set<AnyCancellable>()
 
@@ -162,8 +167,7 @@ public class RadioManager: ObservableObject {
     private let autoReconnectEnabledKey = "com.fieldHT.autoReconnectEnabled"
     private var reconnectAttempt: Int = 0
 
-    private let maxAutoReconnectAttempts: Int = 6
-    private let maxAutoReconnectTotalSeconds: TimeInterval = 90
+    private let maxAutoReconnectDelaySeconds: Double = 15
     private let speakerMicEvidenceTimeout: TimeInterval = 90
     
     public init() {
@@ -227,6 +231,21 @@ public class RadioManager: ObservableObject {
 
         disconnect()
     }
+
+    private func recordConnectionNote(category: String, message: String, fields: [String: String] = [:]) {
+        guard BLECaptureStore.isEnabled else { return }
+        Task {
+            await BLECaptureStore.shared.recordNote(category: category, message: message, fields: fields)
+        }
+    }
+
+    private func updateIdleTimerForCapture() {
+        #if DEBUG && canImport(UIKit)
+        UIApplication.shared.isIdleTimerDisabled =
+            BLECaptureStore.isEnabled &&
+            (isConnected || isConnecting || isAutoReconnecting)
+        #endif
+    }
     
     /// Connect to a radio device
     public func connect(to deviceUUID: UUID) {
@@ -244,6 +263,12 @@ public class RadioManager: ObservableObject {
         reconnectTask = nil
         isAutoReconnecting = false
         reconnectAttempt = 0
+        updateIdleTimerForCapture()
+
+        let startedAt = Date()
+        recordConnectionNote(category: "radio_connect_requested", message: "User requested radio connection", fields: [
+            "device_uuid": deviceUUID.uuidString
+        ])
         
         connectionTask = Task {
             do {
@@ -268,6 +293,12 @@ public class RadioManager: ObservableObject {
                 self.radioController = controller
                 self.isConnected = true
                 self.isConnecting = false
+                self.connectionError = nil
+                self.updateIdleTimerForCapture()
+                self.recordConnectionNote(category: "radio_connect_completed", message: "Radio connected", fields: [
+                    "device_uuid": deviceUUID.uuidString,
+                    "elapsed_ms": String(Int(Date().timeIntervalSince(startedAt) * 1000.0))
+                ])
                 
                 // Start polling for battery. Speaker-mic direct BLE is manual-only for now;
                 // auto-restoring that second link was causing connection churn.
@@ -278,15 +309,20 @@ public class RadioManager: ObservableObject {
                     self.isConnecting = false
                     self.radioController = nil
                     self.cancellables.removeAll()
+                    self.updateIdleTimerForCapture()
                     return
                 }
 
                 self.connectionError = error.localizedDescription
                 self.isConnecting = false
                 self.radioController = nil
-                self.connectionController = nil
-                self.connectionControllerDeviceUUID = nil
                 self.cancellables.removeAll()
+                self.updateIdleTimerForCapture()
+                self.recordConnectionNote(category: "radio_connect_failed", message: "Radio connection failed", fields: [
+                    "device_uuid": deviceUUID.uuidString,
+                    "elapsed_ms": String(Int(Date().timeIntervalSince(startedAt) * 1000.0)),
+                    "error": error.localizedDescription
+                ])
 
                 startAutoReconnect(to: deviceUUID)
             }
@@ -327,6 +363,7 @@ public class RadioManager: ObservableObject {
         reconnectTask = nil
         isAutoReconnecting = false
         reconnectAttempt = 0
+        stopConnectionHealthLogging()
 
         stopPolling()
         cancellables.removeAll()
@@ -347,6 +384,7 @@ public class RadioManager: ObservableObject {
                 self.radioController = nil
                 self.speakerMicController = nil
                 self.isConnected = false
+                self.isConnecting = false
                 self.connectionError = nil
                 self.speakerMicConnectionError = nil
                 self.isSpeakerMicConnecting = false
@@ -356,6 +394,7 @@ public class RadioManager: ObservableObject {
                 self.scanReturnDoubleChannel = nil
                 self.lastMemoryChannelAIndex = nil
                 self.lastMemoryChannelBIndex = nil
+                self.updateIdleTimerForCapture()
             }
         }
     }
@@ -377,14 +416,15 @@ public class RadioManager: ObservableObject {
         connectionTask = nil
 
         stopPolling()
+        stopConnectionHealthLogging()
         cancellables.removeAll()
 
-        connectionController = nil
-        connectionControllerDeviceUUID = nil
+        connectionController?.handleTransportDidDisconnect()
         radioController = nil
         isConnected = false
         isConnecting = false
         isSpeakerMicConnecting = false
+        updateIdleTimerForCapture()
         scanStateOverride = nil
         scanReturnDoubleChannel = nil
         lastMemoryChannelAIndex = nil
@@ -393,6 +433,11 @@ public class RadioManager: ObservableObject {
         if let error {
             connectionError = error.localizedDescription
         }
+
+        recordConnectionNote(category: "radio_transport_disconnected", message: "Radio transport disconnected", fields: [
+            "device_uuid": connectionControllerDeviceUUID?.uuidString ?? lastPairedDeviceUUID?.uuidString ?? "unknown",
+            "error": error?.localizedDescription ?? "nil"
+        ])
 
         if autoReconnectEnabled, let uuid = lastPairedDeviceUUID {
             startAutoReconnect(to: uuid)
@@ -408,8 +453,11 @@ public class RadioManager: ObservableObject {
 
         isAutoReconnecting = true
         reconnectAttempt = 0
-
-        let startedAt = Date()
+        connectionError = "Connection lost. Reconnecting..."
+        updateIdleTimerForCapture()
+        recordConnectionNote(category: "radio_reconnect_started", message: "Started auto reconnect loop", fields: [
+            "device_uuid": deviceUUID.uuidString
+        ])
 
         reconnectTask = Task { [weak self] in
             guard let self else { return }
@@ -426,19 +474,13 @@ public class RadioManager: ObservableObject {
                     continue
                 }
 
-                let elapsed = Date().timeIntervalSince(startedAt)
-                if self.reconnectAttempt >= self.maxAutoReconnectAttempts || elapsed >= self.maxAutoReconnectTotalSeconds {
-                    self.connectionError = "Unable to reconnect. Tap Connect to try again."
-                    self.isConnecting = false
-                    self.radioController = nil
-                    self.cancellables.removeAll()
-                    // Stop the loop and persist that we're no longer auto-reconnecting.
-                    self.autoReconnectEnabled = false
-                    break
-                }
-
                 self.isConnecting = true
-                self.connectionError = nil
+                self.connectionError = "Connection lost. Reconnecting..."
+                self.updateIdleTimerForCapture()
+                self.recordConnectionNote(category: "radio_reconnect_attempt", message: "Attempting radio reconnect", fields: [
+                    "device_uuid": deviceUUID.uuidString,
+                    "attempt": String(self.reconnectAttempt + 1)
+                ])
 
                 do {
                     if let existing = self.connectionController,
@@ -461,6 +503,11 @@ public class RadioManager: ObservableObject {
                     self.isConnecting = false
                     self.isAutoReconnecting = false
                     self.reconnectAttempt = 0
+                    self.connectionError = nil
+                    self.updateIdleTimerForCapture()
+                    self.recordConnectionNote(category: "radio_reconnect_completed", message: "Radio reconnect succeeded", fields: [
+                        "device_uuid": deviceUUID.uuidString
+                    ])
                     self.startPolling()
                     break
                 } catch {
@@ -469,13 +516,12 @@ public class RadioManager: ObservableObject {
                     }
 
                     self.radioController = nil
-                    self.connectionController = nil
-                    self.connectionControllerDeviceUUID = nil
                     self.isConnected = false
                     self.isConnecting = false
                     self.cancellables.removeAll()
+                    self.updateIdleTimerForCapture()
 
-                    self.connectionError = error.localizedDescription
+                    self.connectionError = "Connection lost. Reconnecting..."
 
                     // If Bluetooth is unavailable, don't keep spinning.
                     if let bleError = error as? BLEError, bleError == .bluetoothUnavailable {
@@ -483,10 +529,22 @@ public class RadioManager: ObservableObject {
                         self.radioController = nil
                         self.cancellables.removeAll()
                         self.autoReconnectEnabled = false
+                        self.connectionError = error.localizedDescription
+                        self.updateIdleTimerForCapture()
+                        self.recordConnectionNote(category: "radio_reconnect_stopped", message: "Stopped auto reconnect because Bluetooth is unavailable", fields: [
+                            "device_uuid": deviceUUID.uuidString,
+                            "error": error.localizedDescription
+                        ])
                         break
                     }
 
                     let delaySeconds = self.nextReconnectDelaySeconds(attempt: self.reconnectAttempt)
+                    self.recordConnectionNote(category: "radio_reconnect_retry_scheduled", message: "Scheduling next radio reconnect attempt", fields: [
+                        "device_uuid": deviceUUID.uuidString,
+                        "attempt": String(self.reconnectAttempt + 1),
+                        "delay_seconds": String(format: "%.2f", delaySeconds),
+                        "error": error.localizedDescription
+                    ])
                     self.reconnectAttempt += 1
                     try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
                 }
@@ -495,15 +553,17 @@ public class RadioManager: ObservableObject {
             await MainActor.run {
                 self.reconnectTask = nil
                 self.isAutoReconnecting = false
+                self.updateIdleTimerForCapture()
             }
         }
     }
 
     private func nextReconnectDelaySeconds(attempt: Int) -> Double {
-        // Exponential backoff with jitter, capped.
-        let base = min(pow(2.0, Double(min(attempt, 6))), 60.0) // 1,2,4,8,16,32,60...
-        let jitter = Double.random(in: 0...(base * 0.2))
-        return max(1.0, base + jitter)
+        let schedule: [Double] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, maxAutoReconnectDelaySeconds]
+        let index = min(attempt, schedule.count - 1)
+        let base = schedule[index]
+        let jitter = Double.random(in: 0...(base * 0.15))
+        return min(maxAutoReconnectDelaySeconds, base + jitter)
     }
 
     private var speakerMicEvidenceIsFresh: Bool {
@@ -576,6 +636,7 @@ public class RadioManager: ObservableObject {
     
     private func startPolling() {
         stopPolling()
+        startConnectionHealthLogging()
         // Poll every 60 seconds for Battery
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -590,6 +651,45 @@ public class RadioManager: ObservableObject {
     private func stopPolling() {
         timer?.invalidate()
         timer = nil
+    }
+
+    private func startConnectionHealthLogging() {
+        stopConnectionHealthLogging()
+
+        guard let uuid = lastPairedDeviceUUID else { return }
+        let startedAt = Date()
+        recordConnectionNote(category: "connection_health_started", message: "Started connection health logging", fields: [
+            "device_uuid": uuid.uuidString
+        ])
+
+        connectionHealthTask = Task { [weak self] in
+            guard let self else { return }
+
+            while !Task.isCancelled {
+                guard self.isConnected, let controller = self.radioController else {
+                    break
+                }
+
+                let uptimeMs = Int(Date().timeIntervalSince(startedAt) * 1000.0)
+                let status = controller.state?.status
+                self.recordConnectionNote(category: "connection_health", message: "Radio connection health heartbeat", fields: [
+                    "device_uuid": uuid.uuidString,
+                    "uptime_ms": String(uptimeMs),
+                    "transport_ready": String(controller.isConnected),
+                    "scan": String(controller.state?.settings.scan ?? false),
+                    "rx": String(status?.isInRx ?? false),
+                    "tx": String(status?.isInTx ?? false),
+                    "rssi": String(Int(status?.rssi ?? 0))
+                ])
+
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+            }
+        }
+    }
+
+    private func stopConnectionHealthLogging() {
+        connectionHealthTask?.cancel()
+        connectionHealthTask = nil
     }
     
     private func refreshBattery() async throws {
