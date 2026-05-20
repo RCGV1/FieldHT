@@ -20,6 +20,7 @@ public final class SpeakerMicController: ObservableObject {
     @Published public var errorMessage: String?
 
     private var batteryPollTask: Task<Void, Never>?
+    private static let batteryPollIntervalNanoseconds: UInt64 = 180_000_000_000
 
     private init(deviceUUID: UUID, connection: CommandConnection) {
         self.deviceUUID = deviceUUID
@@ -148,7 +149,7 @@ public final class SpeakerMicController: ObservableObject {
         batteryPollTask?.cancel()
         batteryPollTask = Task { [weak self] in
             while let self, !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                try? await Task.sleep(nanoseconds: Self.batteryPollIntervalNanoseconds)
                 guard !Task.isCancelled else { return }
                 await self.refreshBattery()
             }

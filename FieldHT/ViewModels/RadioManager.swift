@@ -154,8 +154,9 @@ public class RadioManager: ObservableObject {
     private var connectionTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var connectionHealthTask: Task<Void, Never>?
-    private var timer: Timer?
+    private var radioPollTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
+    private var lastRadioBatteryRefreshAt: Date?
 
     // Reuse the underlying transport/controller across reconnect attempts to avoid
     // recreating CoreBluetooth managers repeatedly (can lead to XPC invalid loops).
@@ -169,6 +170,8 @@ public class RadioManager: ObservableObject {
 
     private let maxAutoReconnectDelaySeconds: Double = 15
     private let speakerMicEvidenceTimeout: TimeInterval = 90
+    private let normalRadioPollInterval: TimeInterval = 60
+    private let speakerMicQuietRadioPollInterval: TimeInterval = 300
     
     public init() {
         if UserDefaults.standard.object(forKey: autoReconnectEnabledKey) == nil {
@@ -637,20 +640,79 @@ public class RadioManager: ObservableObject {
     private func startPolling() {
         stopPolling()
         startConnectionHealthLogging()
-        // Poll every 60 seconds for Battery
-        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                try? await self?.refreshBattery()
-            }
+        radioPollTask = Task { [weak self] in
+            await self?.runRadioBatteryPollLoop()
         }
-        
-        // Initial fetch
-        Task { try? await refreshBattery() }
     }
     
     private func stopPolling() {
-        timer?.invalidate()
-        timer = nil
+        radioPollTask?.cancel()
+        radioPollTask = nil
+    }
+
+    private var shouldReduceRadioPollingForSpeakerMic: Bool {
+        (speakerMicController?.isConnected ?? false) ||
+        speakerMicEvidenceIsFresh ||
+        (currentStatus?.isAOCConnected ?? false) ||
+        (currentStatus?.isHFPConnected ?? false)
+    }
+
+    private var currentRadioPollInterval: TimeInterval {
+        shouldReduceRadioPollingForSpeakerMic ? speakerMicQuietRadioPollInterval : normalRadioPollInterval
+    }
+
+    private func runRadioBatteryPollLoop() async {
+        await performRadioBatteryPollIfNeeded(reason: "initial")
+
+        while !Task.isCancelled {
+            let interval = currentRadioPollInterval
+            let nanoseconds = UInt64(interval * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard !Task.isCancelled else { return }
+            await performRadioBatteryPollIfNeeded(reason: "periodic")
+        }
+    }
+
+    private func performRadioBatteryPollIfNeeded(reason: String) async {
+        guard radioController != nil else { return }
+
+        let quietMode = shouldReduceRadioPollingForSpeakerMic
+        if quietMode {
+            let now = Date()
+            if reason == "initial" {
+                lastRadioBatteryRefreshAt = now
+                recordConnectionNote(category: "radio_poll_quiet_skip", message: "Skipped initial radio poll during speaker mic quiet mode", fields: [
+                    "reason": reason,
+                    "quiet_interval_seconds": String(Int(speakerMicQuietRadioPollInterval))
+                ])
+                return
+            }
+
+            if let lastRadioBatteryRefreshAt,
+               now.timeIntervalSince(lastRadioBatteryRefreshAt) < speakerMicQuietRadioPollInterval {
+                recordConnectionNote(category: "radio_poll_quiet_skip", message: "Skipped radio poll during speaker mic quiet mode", fields: [
+                    "reason": reason,
+                    "quiet_interval_seconds": String(Int(speakerMicQuietRadioPollInterval)),
+                    "last_refresh_age_seconds": String(Int(now.timeIntervalSince(lastRadioBatteryRefreshAt)))
+                ])
+                return
+            }
+        }
+
+        do {
+            try await refreshBattery(
+                includeVoltage: !quietMode,
+                includeSpeakerMicBattery: !quietMode,
+                reason: reason,
+                quietMode: quietMode
+            )
+        } catch {
+            recordConnectionNote(category: "radio_poll_failed", message: "Radio battery poll failed", fields: [
+                "reason": reason,
+                "quiet_mode": String(quietMode),
+                "error": error.localizedDescription
+            ])
+        }
     }
 
     private func startConnectionHealthLogging() {
@@ -692,12 +754,20 @@ public class RadioManager: ObservableObject {
         connectionHealthTask = nil
     }
     
-    private func refreshBattery() async throws {
+    private func refreshBattery(
+        includeVoltage: Bool,
+        includeSpeakerMicBattery: Bool,
+        reason: String,
+        quietMode: Bool
+    ) async throws {
         guard let controller = radioController else { return }
-        let volts = try await controller.batteryVoltage()
+        if includeVoltage {
+            let volts = try await controller.batteryVoltage()
+            self.batteryVoltage = volts
+        }
         let level = try await controller.batteryLevelAsPercentage()
-        self.batteryVoltage = volts
         self.batteryLevel = level
+        self.lastRadioBatteryRefreshAt = Date()
 
         if currentStatus?.isAOCConnected == true {
             noteSpeakerMicEvidence()
@@ -705,7 +775,7 @@ public class RadioManager: ObservableObject {
 
         // The live AOC status bit appears noisy on some radios, so keep trying the
         // accessory battery read while we have recent evidence the speaker mic exists.
-        if supportsSpeakerMicAccessory || speakerMicEvidenceIsFresh || hasValidRadioReportedSpeakerMicBattery {
+        if includeSpeakerMicBattery && (supportsSpeakerMicAccessory || speakerMicEvidenceIsFresh || hasValidRadioReportedSpeakerMicBattery) {
             if let hmLevel = try? await controller.rcBatteryLevel(), (1...100).contains(hmLevel) {
                 self.hmBatteryLevel = hmLevel
                 noteSpeakerMicEvidence()
@@ -713,6 +783,13 @@ public class RadioManager: ObservableObject {
                 self.hmBatteryLevel = 0
             }
         }
+
+        recordConnectionNote(category: "radio_poll_completed", message: "Radio battery poll completed", fields: [
+            "reason": reason,
+            "quiet_mode": String(quietMode),
+            "include_voltage": String(includeVoltage),
+            "include_speaker_mic_battery": String(includeSpeakerMicBattery)
+        ])
 
         // Fire a low-battery notification once when crossing below 10%.
         // Reset the flag when the battery recovers above 15% (e.g. plugged in).
