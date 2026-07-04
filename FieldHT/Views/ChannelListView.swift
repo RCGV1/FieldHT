@@ -60,8 +60,8 @@ struct ChannelListView: View {
                                 }
                             }
                         )) {
-                            ForEach(0..<viewModel.regions.count, id: \.self) { index in
-                                Text("\(index+1).  \(viewModel.regions[index])").tag(index)
+                            ForEach(Array(viewModel.regions.enumerated()), id: \.offset) { index, region in
+                                Text("\(index+1).  \(region)").tag(index)
                             }
                         }
                         .disabled(isHydrating || isImporting || isDocumentImporting)

@@ -17,8 +17,8 @@ struct RegionManagementView: View {
     var body: some View {
         NavigationView {
             List {
-                ForEach(0..<viewModel.regions.count, id: \.self) { index in
-                    regionRow(index: index, name: viewModel.regions[index])
+                ForEach(Array(viewModel.regions.enumerated()), id: \.offset) { index, name in
+                    regionRow(index: index, name: name)
                 }
             }
             .listStyle(.insetGrouped)
