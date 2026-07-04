@@ -57,8 +57,8 @@ All intents return a descriptive error if no radio is connected.
 
 | | |
 |---|---|
-| iOS | 16.0 + |
-| Xcode | 15.0 + |
+| iOS | 26.0 + |
+| Xcode | 26.0 + |
 | Radio | Benshi UV-PRO (or compatible) |
 | BLE | Required for all radio control features |
 | Location | Required for satellite pass predictions |
