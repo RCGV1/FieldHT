@@ -5,9 +5,15 @@ public typealias EventHandler = (EventMessage) -> Void
 
 /// Command connection - low-level interface for communicating with the radio
 public class CommandConnection: BLEConnectionDelegate {
+    private struct PendingReply {
+        let id: UUID
+        let continuation: CheckedContinuation<RadioMessage, Error>
+    }
+
     private let bleConnection: BLEConnection
     private var eventHandlers: [UUID: EventHandler] = [:]
-    private var pendingReplies: [UInt16: (CheckedContinuation<RadioMessage, Error>)] = [:]
+    private var pendingReplies: [UInt16: PendingReply] = [:]
+    private let replySequencer = AsyncSemaphore(value: 1)
     private let queue = DispatchQueue(label: "com.benlink.command")
 
     private func commandLabel(commandGroup: CommandGroup, command: UInt16) -> String {
@@ -97,8 +103,8 @@ public class CommandConnection: BLEConnectionDelegate {
             guard let self = self else { return }
             
             // Cancel all pending replies
-            for (_, continuation) in self.pendingReplies {
-                continuation.resume(throwing: BLEError.notConnected)
+            for (_, pendingReply) in self.pendingReplies {
+                pendingReply.continuation.resume(throwing: BLEError.notConnected)
             }
             self.pendingReplies.removeAll()
         }
@@ -135,8 +141,8 @@ public class CommandConnection: BLEConnectionDelegate {
     public func connectionDidDisconnect(_ connection: BLEConnection, error: Error?) {
         // Handle disconnection
         queue.async {
-            for (_, continuation) in self.pendingReplies {
-                continuation.resume(throwing: BLEError.notConnected)
+            for (_, pendingReply) in self.pendingReplies {
+                pendingReply.continuation.resume(throwing: BLEError.notConnected)
             }
             self.pendingReplies.removeAll()
         }
@@ -167,11 +173,11 @@ public class CommandConnection: BLEConnectionDelegate {
             }
 
             if message.isReply {
-                if let continuation = pendingReplies[message.command] {
+                if let pendingReply = pendingReplies[message.command] {
                     pendingReplies.removeValue(forKey: message.command)
 
                     let reply = try decodeReply(message: message)
-                    continuation.resume(returning: .reply(reply))
+                    pendingReply.continuation.resume(returning: .reply(reply))
                 } else {
                     if handleUnsolicitedReply(message) {
                         return
@@ -664,59 +670,68 @@ public class CommandConnection: BLEConnectionDelegate {
         body: Data,
         timeout: TimeInterval = 5.0
     ) async throws -> RadioMessage {
-        let hexBody = body.map { String(format: "%02hhx", $0) }.joined()
-        print("[BLE-TX] Sending -> Grp: \(commandGroup), Cmd: \(command), Body: \(hexBody)")
-        
-        return try await withCheckedThrowingContinuation { continuation in
-            queue.async {
-                // If there's already a pending reply for this command, fail it to prevent leaking
-                if let existing = self.pendingReplies[command] {
-                    existing.resume(throwing: CancellationError())
-                }
-                
-                self.pendingReplies[command] = continuation
-                
-                let messageData = ProtocolEncoder.encodeMessage(
-                    commandGroup: commandGroup,
-                    command: command,
-                    isReply: false,
-                    body: body
-                )
+        return try await replySequencer.withPermit {
+            let requestID = UUID()
+            let hexBody = body.map { String(format: "%02hhx", $0) }.joined()
+            print("[BLE-TX] Sending -> Grp: \(commandGroup), Cmd: \(command), Body: \(hexBody)")
+
+            return try await withCheckedThrowingContinuation { continuation in
+                queue.async {
+                    // If there's already a pending reply for this command, fail it to prevent leaking.
+                    if let existing = self.pendingReplies[command] {
+                        existing.continuation.resume(throwing: CancellationError())
+                    }
+
+                    self.pendingReplies[command] = PendingReply(id: requestID, continuation: continuation)
+
+                    let messageData = ProtocolEncoder.encodeMessage(
+                        commandGroup: commandGroup,
+                        command: command,
+                        isReply: false,
+                        body: body
+                    )
 
 #if DEBUG
-                let hexMessage = messageData.map { String(format: "%02hhx", $0) }.joined()
-                print("[BLE-TX-RAW] \(hexMessage)")
-                if let parsed = try? ProtocolDecoder.decodeMessage(messageData) {
-                    let parsedBodyHex = parsed.body.map { String(format: "%02hhx", $0) }.joined()
-                    print("[BLE-TX-PARSED] Grp: \(parsed.commandGroup), isReply: \(parsed.isReply), Cmd: \(parsed.command), Body: \(parsedBodyHex)")
-                } else {
-                    print("[BLE-TX-PARSED] Failed to decode outgoing message")
-                }
+                    let hexMessage = messageData.map { String(format: "%02hhx", $0) }.joined()
+                    print("[BLE-TX-RAW] \(hexMessage)")
+                    if let parsed = try? ProtocolDecoder.decodeMessage(messageData) {
+                        let parsedBodyHex = parsed.body.map { String(format: "%02hhx", $0) }.joined()
+                        print("[BLE-TX-PARSED] Grp: \(parsed.commandGroup), isReply: \(parsed.isReply), Cmd: \(parsed.command), Body: \(parsedBodyHex)")
+                    } else {
+                        print("[BLE-TX-PARSED] Failed to decode outgoing message")
+                    }
 #endif
-                
-                Task {
-                    do {
-                        try await self.bleConnection.send(messageData)
-                        
-                        // Set timeout
-                        // We use a separate task for waiting, but must dispatch back to queue to access state
-                        Task {
-                            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                            self.queue.async {
-                                if let continuation = self.pendingReplies[command] {
+
+                    Task {
+                        do {
+                            try await self.bleConnection.send(messageData)
+
+                            // Set timeout
+                            // We use a separate task for waiting, but must dispatch back to queue to access state.
+                            Task {
+                                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                                self.queue.async {
+                                    guard let pendingReply = self.pendingReplies[command],
+                                          pendingReply.id == requestID else {
+                                        return
+                                    }
+
                                     print("[BLE-CMD-ERR] Command \(command) timed out waiting for reply")
                                     self.pendingReplies.removeValue(forKey: command)
-                                    continuation.resume(throwing: ProtocolError.timeout)
+                                    pendingReply.continuation.resume(throwing: ProtocolError.timeout)
                                 }
                             }
-                        }
-                    } catch {
-                        print("[BLE-CMD-ERR] Command \(command) failed to send: \(error)")
-                        self.queue.async {
-                            // Only resume if still pending (not timed out or replied)
-                            if let continuation = self.pendingReplies[command] {
+                        } catch {
+                            print("[BLE-CMD-ERR] Command \(command) failed to send: \(error)")
+                            self.queue.async {
+                                // Only resume if this request is still pending.
+                                guard let pendingReply = self.pendingReplies[command],
+                                      pendingReply.id == requestID else {
+                                    return
+                                }
+
                                 self.pendingReplies.removeValue(forKey: command)
-                                continuation.resume(throwing: error)
+                                pendingReply.continuation.resume(throwing: error)
                             }
                         }
                     }
