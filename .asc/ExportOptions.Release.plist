@@ -7,7 +7,14 @@
 	<key>method</key>
 	<string>app-store-connect</string>
 	<key>signingStyle</key>
-	<string>automatic</string>
+	<string>manual</string>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>BenFaer.FieldHT</key>
+		<string>FieldHT App Store 8</string>
+		<key>BenFaer.FieldHT.Widget</key>
+		<string>FieldHT Widget App Store 8</string>
+	</dict>
 	<key>teamID</key>
 	<string>FRFXFRT624</string>
 	<key>uploadSymbols</key>
