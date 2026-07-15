@@ -241,9 +241,20 @@ public class RadioController: ObservableObject {
         // Load region memory slots
         let maxChannelsToLoad = min(30, activeDeviceInfo.channelCount)
         for i in 0..<maxChannelsToLoad {
-            let channel = try await connection.getChannel(i)
-            
-            regionDict[channel.channelID] = channel
+            if Task.isCancelled {
+                throw CancellationError()
+            }
+
+            do {
+                let channel = try await connection.getChannel(i)
+                regionDict[channel.channelID] = channel
+            } catch {
+                print("Could not load channel \(i): \(error)")
+            }
+
+            // The radio is sensitive to bursts of read commands immediately
+            // after connecting. Keep hydration cooperative with live controls.
+            try await Task.sleep(nanoseconds: 80_000_000)
         }
         
         // Explicitly load VFO channels (ids 252, 251)
@@ -263,12 +274,18 @@ public class RadioController: ObservableObject {
         var regionNames: [String] = []
         if activeDeviceInfo.regionCount > 0 {
             for i in 0..<activeDeviceInfo.regionCount {
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
+
                 do {
                     let name = try await connection.getRegionName(i)
                     regionNames.append(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Group \(i + 1)" : name)
                 } catch {
                     regionNames.append("Group \(i + 1)")
                 }
+
+                try await Task.sleep(nanoseconds: 80_000_000)
             }
         }
         

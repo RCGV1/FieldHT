@@ -477,42 +477,17 @@ struct SettingsView: View {
         }
     }
     
-    // Helper function to hydrate radio with loading indicator and retry logic
+    // The connection flow hydrates the controller before marking it connected.
+    // Re-running hydration here races the background channel loader.
     private func hydrateRadio() async {
         await MainActor.run {
             isHydrating = true
         }
-        
-        // Give time for radio to complete initial hydration if just connected
-        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-        
-        let backoffs = [5, 10, 15]
-        
-        for attempt in 0..<3 {
-            do {
-                try await radioManager.radioController?.hydrate()
-                
-                await MainActor.run {
-                    if radioManager.isConnected {
-                        viewModel.setRadioController(radioManager.radioController)
-                    }
-                    isHydrating = false
-                }
-                return // Success
-            } catch {
-                print("Settings hydration attempt \(attempt + 1) failed: \(error)")
-                
-                if attempt < backoffs.count {
-                    let delaySeconds = backoffs[attempt]
-                    let delay = UInt64(delaySeconds) * 1_000_000_000
-                    try? await Task.sleep(nanoseconds: delay)
-                }
-            }
-        }
-        
         await MainActor.run {
             isHydrating = false
-            viewModel.errorMessage = "Failed to sync settings with radio after multiple attempts."
+            if radioManager.isConnected {
+                viewModel.setRadioController(radioManager.radioController)
+            }
         }
     }
 }

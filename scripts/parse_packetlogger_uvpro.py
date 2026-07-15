@@ -5,7 +5,7 @@ import subprocess
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 
 BASIC_COMMANDS = {
@@ -154,7 +154,7 @@ def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
 
-def detect_live_pklg() -> Path | None:
+def detect_live_pklg() -> Optional[Path]:
     result = run(["lsof", "-c", "PacketLogger"])
     if result.returncode == 0:
         for line in result.stdout.splitlines():
@@ -432,7 +432,7 @@ def prioritized_connections(frames: list[ProtocolFrame]) -> list[int]:
     return sorted(handles, key=lambda handle: connection_score(frames, handle), reverse=True)
 
 
-def find_best_connection(frames: list[ProtocolFrame]) -> int | None:
+def find_best_connection(frames: list[ProtocolFrame]) -> Optional[int]:
     ordered = prioritized_connections(frames)
     return ordered[0] if ordered else None
 

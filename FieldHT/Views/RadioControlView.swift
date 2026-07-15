@@ -413,7 +413,7 @@ struct RadioControlView: View {
 
         if controller.state == nil {
             try? await controller.hydrate()
-        } else {
+        } else if controller.channelsForCurrentRegion.isEmpty {
             _ = try? await controller.hydrateChannels()
         }
 

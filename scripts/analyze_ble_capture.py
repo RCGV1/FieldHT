@@ -4,6 +4,7 @@ import sys
 import argparse
 from collections import Counter
 from pathlib import Path
+from typing import Optional
 
 
 IMPORTANT_CATEGORIES = {
@@ -150,7 +151,7 @@ def connection_health_sessions(note_entries):
 
 def summarize(
     entries,
-    prove_minutes: float | None = None,
+    prove_minutes: Optional[float] = None,
     timeline_limit: int = 200,
     max_heartbeat_gap_seconds: float = 30.0,
 ):
