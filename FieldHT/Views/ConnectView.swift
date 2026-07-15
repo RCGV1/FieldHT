@@ -171,7 +171,6 @@ struct ConnectView: View {
             }
         }
         .animation(.snappy(duration: 0.25), value: radioManager.isConnected)
-        .animation(.snappy(duration: 0.25), value: scanner.discoveredDevices)
         .animation(.snappy(duration: 0.25), value: scanner.isScanning)
     }
 
