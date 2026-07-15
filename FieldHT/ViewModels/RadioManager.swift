@@ -679,15 +679,6 @@ public class RadioManager: ObservableObject {
         let quietMode = shouldReduceRadioPollingForSpeakerMic
         if quietMode {
             let now = Date()
-            if reason == "initial" {
-                lastRadioBatteryRefreshAt = now
-                recordConnectionNote(category: "radio_poll_quiet_skip", message: "Skipped initial radio poll during speaker mic quiet mode", fields: [
-                    "reason": reason,
-                    "quiet_interval_seconds": String(Int(speakerMicQuietRadioPollInterval))
-                ])
-                return
-            }
-
             if let lastRadioBatteryRefreshAt,
                now.timeIntervalSince(lastRadioBatteryRefreshAt) < speakerMicQuietRadioPollInterval {
                 recordConnectionNote(category: "radio_poll_quiet_skip", message: "Skipped radio poll during speaker mic quiet mode", fields: [

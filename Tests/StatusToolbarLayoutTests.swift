@@ -22,6 +22,14 @@ enum StatusToolbarLayoutTests {
             !source.contains("Text(\"BT Audio\")"),
             "Bluetooth audio must not consume text width in the global status pill"
         )
+        expect(
+            !source.contains("(1...100).contains(radioManager.batteryLevel) && radioManager.batteryVoltage > 0"),
+            "radio battery percentage must not depend on a voltage read"
+        )
+        expect(
+            source.contains("if hasValidVoltage"),
+            "battery voltage should render only when it is available"
+        )
 
         if failures > 0 {
             exit(1)
