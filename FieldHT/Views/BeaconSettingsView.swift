@@ -60,7 +60,7 @@ struct BeaconSettingsView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if settings != nil {
-                Section(header: Text("Protocol Formatting")) {
+                Section(header: Text("Packet Format")) {
                     Picker("Format", selection: $packetFormat) {
                         ForEach(PacketFormat.allCases, id: \.self) { format in
                             Text(format.rawValue).tag(format)
@@ -69,7 +69,7 @@ struct BeaconSettingsView: View {
                     .pickerStyle(.segmented)
                 }
                 
-                Section(header: Text("APRS Settings"), footer: Text("Enter your amateur radio callsign, optional SSID, and 2-character APRS symbol")) {
+                Section(header: Text("APRS Identity"), footer: Text("Enter your amateur radio callsign, optional SSID, and a two-character APRS symbol.")) {
                     TextField("Callsign", text: $aprsCallsign)
                         .textInputAutocapitalization(.characters)
                         .disableAutocorrection(true)
@@ -87,11 +87,11 @@ struct BeaconSettingsView: View {
                     }
                 }
                 
-                Section(header: Text("Beacon Info")) {
+                Section(header: Text("Location Sharing"), footer: Text("The radio stores the sharing interval in 10-second steps.")) {
                     TextField("Beacon Message", text: $beaconMessage)
                     
                     HStack {
-                        Text("Tx Interval (s)")
+                        Text("Sharing Interval (s)")
                         Spacer()
                         TextField("Seconds", value: $locationShareInterval, format: .number)
                             .keyboardType(.numberPad)
@@ -99,17 +99,20 @@ struct BeaconSettingsView: View {
                     }
                 }
                 
-                Section(header: Text("PTT Release Actions")) {
+                Section(header: Text("PTT Release")) {
                     Toggle("Send Location on PTT Release", isOn: $pttReleaseSendLocation)
                     Toggle("Send ID Info on PTT Release", isOn: $pttReleaseSendIDInfo)
                     Toggle("Send BSS ID on PTT Release", isOn: $pttReleaseSendBSSUserID)
                 }
                 
-                Section(header: Text("Advanced / Permissions")) {
+                Section(header: Text("Location and Station Data")) {
                     Toggle("Should Share Location", isOn: $shouldShareLocation)
                     Toggle("Allow Position Check", isOn: $allowPositionCheck)
                     Toggle("Send Power/Voltage", isOn: $sendPwrVoltage)
                     
+                }
+
+                Section(header: Text("Digipeater"), footer: Text("Set both Time to Live and Maximum Forwards above zero before relying on packet forwarding.")) {
                     HStack {
                         Text("Time to Live")
                         Spacer()
@@ -117,11 +120,11 @@ struct BeaconSettingsView: View {
                             .keyboardType(.numberPad)
                             .multilineTextAlignment(.trailing)
                     }
-                    
+
                     HStack {
-                        Text("Max Forward Times")
+                        Text("Maximum Forwards")
                         Spacer()
-                        TextField("Max Forwards", value: $maxFwdTimes, format: .number)
+                        TextField("Forwards", value: $maxFwdTimes, format: .number)
                             .keyboardType(.numberPad)
                             .multilineTextAlignment(.trailing)
                     }

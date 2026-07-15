@@ -45,6 +45,13 @@ struct SettingsView: View {
                                     Label("APRS / Packet Beaconing", systemImage: "location.fill")
                                 }
 
+                                NavigationLink {
+                                    ScanSettingsView()
+                                        .environmentObject(radioManager)
+                                } label: {
+                                    Label("Scan", systemImage: "dot.radiowaves.left.and.right")
+                                }
+
                                 if radioManager.supportsSpeakerMicAccessory || radioManager.isBluetoothAudioConnected || radioManager.speakerMicController != nil || radioManager.lastSpeakerMicDeviceUUID != nil {
                                     NavigationLink {
                                         SpeakerMicView(viewModel: viewModel)
@@ -59,6 +66,8 @@ struct SettingsView: View {
                                 Label("Programmable Buttons", systemImage: "button.programmable")
                                     .foregroundColor(.secondary)
                                 Label("APRS / Packet Beaconing", systemImage: "location.fill")
+                                    .foregroundColor(.secondary)
+                                Label("Scan", systemImage: "dot.radiowaves.left.and.right")
                                     .foregroundColor(.secondary)
                                 Label("Speaker Mic & BT Audio", systemImage: "mic.badge.plus")
                                     .foregroundColor(.secondary)
