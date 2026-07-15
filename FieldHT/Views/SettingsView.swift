@@ -26,6 +26,12 @@ struct SettingsView: View {
                         Section {
                             if let radioController = radioManager.radioController {
                                 NavigationLink {
+                                    RadioControlCustomizationView()
+                                } label: {
+                                    Label("Customize Radio Control", systemImage: "rectangle.3.group")
+                                }
+
+                                NavigationLink {
                                     ConnectionManagementView()
                                         .environmentObject(radioManager)
                                 } label: {
@@ -68,6 +74,8 @@ struct SettingsView: View {
                                     }
                                 }
                             } else {
+                                Label("Customize Radio Control", systemImage: "rectangle.3.group")
+                                    .foregroundColor(.secondary)
                                 Label("Connection Management", systemImage: "antenna.radiowaves.left.and.right")
                                     .foregroundColor(.secondary)
                                 Label("Channels & Groups", systemImage: "list.number")

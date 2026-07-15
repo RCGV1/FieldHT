@@ -9,6 +9,7 @@ import SwiftUI
 
 struct RadioControlView: View {
     @EnvironmentObject var radioManager: RadioManager
+    @EnvironmentObject private var radioControlLayout: RadioControlLayoutStore
     @State private var localSquelchLevel: Int = 0
     @StateObject private var viewModel = ChannelViewModel()
 
@@ -237,14 +238,32 @@ struct RadioControlView: View {
 
     private var mainContent: some View {
         VStack(spacing: 20) {
-            memoryGroupSection
-            dualMonitorToggle
-            vfoSection
-            quickTogglesSection
-            channelNavigationSection
-            squelchSection
-            rssiGaugeSection
+            ForEach(radioControlLayout.sections) { section in
+                radioControlSection(section)
+            }
+            Spacer()
+        }
+        .padding()
+    }
 
+    @ViewBuilder
+    private func radioControlSection(_ section: RadioControlSection) -> some View {
+        switch section {
+        case .memoryGroup:
+            memoryGroupSection
+        case .monitorMode:
+            dualMonitorToggle
+        case .primaryChannels:
+            vfoSection
+        case .quickActions:
+            quickTogglesSection
+        case .channelNavigation:
+            channelNavigationSection
+        case .squelch:
+            squelchSection
+        case .signalMeter:
+            rssiGaugeSection
+        case .satellite:
             NavigationLink {
                 SatelliteTrackingView()
                     .environmentObject(radioManager)
@@ -265,9 +284,7 @@ struct RadioControlView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(cardBackground)
             }
-            Spacer()
         }
-        .padding()
     }
 
     private var quickTogglesSection: some View {

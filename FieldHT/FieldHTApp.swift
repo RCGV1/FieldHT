@@ -13,6 +13,7 @@ import TipKit
 @main
 struct FieldHTApp: App {
     @StateObject private var radioManager = RadioManager()
+    @StateObject private var radioControlLayout = RadioControlLayoutStore.shared
     @Environment(\.scenePhase) private var scenePhase
     private let notificationManager = NotificationManager.shared
 
@@ -25,6 +26,7 @@ struct FieldHTApp: App {
         WindowGroup {
             MainTabView()
                 .environmentObject(radioManager)
+                .environmentObject(radioControlLayout)
                 .onAppear {
                     notificationManager.radioManager = radioManager
                     notificationManager.requestPermission()

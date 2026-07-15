@@ -6,6 +6,17 @@ struct ScanSettingsView: View {
     var body: some View {
         Form {
             Section {
+                NavigationLink {
+                    AdvancedFrequencyScanView()
+                        .environmentObject(radioManager)
+                } label: {
+                    Label("Advanced Frequency Scan", systemImage: "dial.medium")
+                }
+            } footer: {
+                Text("Tune across a custom frequency range with separate scan and fine-tuning steps.")
+            }
+
+            Section {
                 Toggle(
                     "Scan Active Group",
                     isOn: Binding(
