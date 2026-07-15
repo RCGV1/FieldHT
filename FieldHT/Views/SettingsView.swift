@@ -32,13 +32,6 @@ struct SettingsView: View {
                                 }
 
                                 NavigationLink {
-                                    ConnectionManagementView()
-                                        .environmentObject(radioManager)
-                                } label: {
-                                    Label("Connection Management", systemImage: "antenna.radiowaves.left.and.right")
-                                }
-
-                                NavigationLink {
                                     ChannelListView(radioController: radioController)
                                         .environmentObject(radioManager)
                                 } label: {
@@ -75,8 +68,6 @@ struct SettingsView: View {
                                 }
                             } else {
                                 Label("Customize Radio Control", systemImage: "rectangle.3.group")
-                                    .foregroundColor(.secondary)
-                                Label("Connection Management", systemImage: "antenna.radiowaves.left.and.right")
                                     .foregroundColor(.secondary)
                                 Label("Channels & Groups", systemImage: "list.number")
                                     .foregroundColor(.secondary)
