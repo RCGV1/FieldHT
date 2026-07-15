@@ -292,11 +292,13 @@ public class BLEConnection: NSObject {
                 centralManager.scanForPeripherals(withServices: nil, options: nil)
             }
 
-        case .unknown, .resetting:
-            // Wait for a definitive state; CoreBluetooth often starts as .unknown.
+        case .unknown, .resetting, .unsupported:
+            // A restored central can briefly report .unsupported while CoreBluetooth
+            // is initializing, then transition to .poweredOn. Keep this in-flight
+            // reconnect alive instead of incorrectly reporting Bluetooth unavailable.
             return
 
-        case .poweredOff, .unauthorized, .unsupported:
+        case .poweredOff, .unauthorized:
             failConnect(BLEError.bluetoothUnavailable)
 
         @unknown default:
@@ -413,7 +415,7 @@ extension BLEConnection: CBCentralManagerDelegate {
                 startServiceDiscoveryIfPossible()
             }
 
-        case .poweredOff, .unauthorized, .unsupported:
+        case .poweredOff, .unauthorized:
             if connectContinuation != nil {
                 failConnect(BLEError.bluetoothUnavailable)
             }
@@ -425,7 +427,7 @@ extension BLEConnection: CBCentralManagerDelegate {
                 resetConnectionState()
             }
 
-        case .resetting, .unknown:
+        case .resetting, .unknown, .unsupported:
             // CoreBluetooth commonly enters these transitional states while creating a
             // new central manager. Keep an in-flight reconnect alive until its state
             // becomes definitive instead of reporting a false Bluetooth failure.

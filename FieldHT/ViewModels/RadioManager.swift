@@ -382,8 +382,8 @@ public class RadioManager: ObservableObject {
             }
             
             await MainActor.run {
-                self.connectionController = nil
-                self.connectionControllerDeviceUUID = nil
+                // Keep the main controller alive so a manual reconnect uses the same
+                // CBCentralManager instead of recreating it in a transient state.
                 self.radioController = nil
                 self.speakerMicController = nil
                 self.isConnected = false

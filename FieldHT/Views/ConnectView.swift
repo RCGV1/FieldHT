@@ -296,7 +296,7 @@ struct ConnectView: View {
                     scanButton(title: "Scan Nearby Radios")
                 }
 
-                if hasSavedRadio {
+                if radioManager.isConnected, hasSavedRadio {
                     Toggle("Reconnect Automatically", isOn: $radioManager.autoReconnectEnabled)
                         .disabled(isBusy)
                 }
