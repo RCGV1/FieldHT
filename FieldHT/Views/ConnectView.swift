@@ -125,8 +125,46 @@ struct ConnectView: View {
         return "Scanning..."
     }
 
-    private var shouldShowHeaderScanAction: Bool {
-        !radioManager.isConnected && (hasSavedRadio || !nearbyDevices.isEmpty)
+    private var canScan: Bool {
+        scanner.bluetoothState == .poweredOn
+    }
+
+    private var shouldShowPairingInstructions: Bool {
+        !radioManager.isConnected && !hasSavedRadio && nearbyDevices.isEmpty && canScan
+    }
+
+    private var bluetoothStatusTitle: String {
+        switch scanner.bluetoothState {
+        case .poweredOff:
+            return "Bluetooth is off"
+        case .unauthorized:
+            return "Bluetooth permission is needed"
+        case .unsupported:
+            return "Bluetooth is unavailable"
+        case .resetting, .unknown:
+            return "Preparing Bluetooth"
+        case .poweredOn:
+            return "Bluetooth is ready"
+        @unknown default:
+            return "Bluetooth is unavailable"
+        }
+    }
+
+    private var bluetoothStatusDetail: String {
+        switch scanner.bluetoothState {
+        case .poweredOff:
+            return "Turn on Bluetooth to scan for a different radio."
+        case .unauthorized:
+            return "Allow Bluetooth access for FieldHT in Settings."
+        case .unsupported:
+            return "This device cannot scan for Bluetooth radios."
+        case .resetting, .unknown:
+            return "This usually takes a moment."
+        case .poweredOn:
+            return ""
+        @unknown default:
+            return "Bluetooth is not ready yet."
+        }
     }
 
     var body: some View {
@@ -134,11 +172,15 @@ struct ConnectView: View {
             VStack(alignment: .leading, spacing: 18) {
                 heroCard
 
-                if let error = radioManager.connectionError, !error.isEmpty {
+                if !radioManager.isConnected,
+                   let error = radioManager.connectionError,
+                   !error.isEmpty {
                     errorCard(error)
                 }
 
-                nearbyRadiosCard
+                if !radioManager.isConnected {
+                    nearbyRadiosCard
+                }
             }
             .padding(.horizontal, 20)
             .padding(.top, 16)
@@ -241,17 +283,13 @@ struct ConnectView: View {
                 } else if hasSavedRadio {
                     ViewThatFits {
                         HStack(spacing: 10) {
-                            if let savedDevice {
-                                connectButton(for: savedDevice, title: "Connect \(savedDevice.name)")
-                            }
-                            scanButton(title: "Scan Nearby")
+                            reconnectButton
+                            scanButton(title: "Find Another Radio")
                         }
 
                         VStack(spacing: 10) {
-                            if let savedDevice {
-                                connectButton(for: savedDevice, title: "Connect \(savedDevice.name)")
-                            }
-                            scanButton(title: "Scan Nearby")
+                            reconnectButton
+                            scanButton(title: "Find Another Radio")
                         }
                     }
                 } else {
@@ -263,10 +301,12 @@ struct ConnectView: View {
                         .disabled(isBusy)
                 }
 
-                Text(pairingInstructionText)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if shouldShowPairingInstructions {
+                    Text(pairingInstructionText)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
 
@@ -298,29 +338,14 @@ struct ConnectView: View {
 
                     Spacer(minLength: 12)
 
-                    if shouldShowHeaderScanAction {
-                        Button(scanner.isScanning ? "Scanning..." : "Scan") {
-                            rescan()
-                        }
-                        .font(.footnote.weight(.semibold))
-                        .buttonStyle(.bordered)
-                        .disabled(scanner.bluetoothState != .poweredOn || isBusy)
-                    }
                 }
 
-                if radioManager.isConnected {
-                    nearbyMessageRow(
-                        symbol: "checkmark.circle",
-                        tint: Color.green,
-                        title: "Radio connected",
-                        detail: "Disconnect above if you want to switch to a different radio."
-                    )
-                } else if scanner.bluetoothState != .poweredOn {
+                if !canScan {
                     nearbyMessageRow(
                         symbol: "bolt.horizontal.circle",
                         tint: Color.orange,
-                        title: "Bluetooth is off",
-                        detail: "Turn on Bluetooth, then scan again."
+                        title: bluetoothStatusTitle,
+                        detail: bluetoothStatusDetail
                     )
                 } else if nearbyDevices.isEmpty {
                     nearbyEmptyState
@@ -357,14 +382,16 @@ struct ConnectView: View {
                     .foregroundStyle(.primary)
             }
 
-            Text(pairingInstructionText)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if shouldShowPairingInstructions {
+                Text(pairingInstructionText)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
-            if savedDevice == nil {
+            if !hasSavedRadio {
                 scanButton(title: scanner.isScanning ? "Scanning..." : "Start Scan")
-                    .disabled(scanner.bluetoothState != .poweredOn || isBusy || scanner.isScanning)
+                    .disabled(!canScan || isBusy || scanner.isScanning)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -472,19 +499,6 @@ struct ConnectView: View {
             }
     }
 
-    private func connectButton(for device: DiscoveredDevice, title: String) -> some View {
-        Button {
-            selectedDevice = device
-            connectToDevice(device)
-        } label: {
-            Label(title, systemImage: "dot.radiowaves.left.and.right")
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(accentOrange)
-        .disabled(scanner.bluetoothState != .poweredOn || isBusy)
-    }
-
     private func scanButton(title: String) -> some View {
         Button {
             rescan()
@@ -494,7 +508,19 @@ struct ConnectView: View {
         }
         .buttonStyle(.bordered)
         .tint(.primary)
-        .disabled(scanner.bluetoothState != .poweredOn || isBusy)
+        .disabled(!canScan || isBusy)
+    }
+
+    private var reconnectButton: some View {
+        Button {
+            reconnectSavedRadio()
+        } label: {
+            Label("Reconnect", systemImage: "arrow.clockwise")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(accentOrange)
+        .disabled(isBusy)
     }
 
     private func deviceSubtitle(for device: DiscoveredDevice) -> String {
@@ -512,13 +538,14 @@ struct ConnectView: View {
     }
 
     private var pairingInstructionText: String {
-        if scanner.bluetoothState != .poweredOn {
+        if !canScan {
             return "Turn on Bluetooth, then on the radio open Main Menu and toggle Pairing."
         }
         return "On the radio, open Main Menu and toggle Pairing."
     }
 
     private func rescan() {
+        guard canScan, !isBusy else { return }
         scanner.stopScanning()
         scanner.startScanning()
     }
@@ -526,7 +553,8 @@ struct ConnectView: View {
     private func updateScanningState() {
         if !radioManager.isConnected,
            !radioManager.isConnecting,
-           scanner.bluetoothState == .poweredOn,
+           !hasSavedRadio,
+           canScan,
            !scanner.isScanning {
             scanner.startScanning()
         }
@@ -549,6 +577,12 @@ struct ConnectView: View {
                 radioManager.connect(to: device.peripheral.identifier)
             }
         }
+    }
+
+    private func reconnectSavedRadio() {
+        guard let savedUUID = radioManager.lastPairedDeviceUUID else { return }
+        selectedDevice = savedDevice
+        radioManager.connect(to: savedUUID)
     }
 
     private func forgetSavedRadio() {

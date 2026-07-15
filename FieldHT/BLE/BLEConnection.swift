@@ -413,7 +413,7 @@ extension BLEConnection: CBCentralManagerDelegate {
                 startServiceDiscoveryIfPossible()
             }
 
-        case .poweredOff, .unauthorized, .unsupported, .resetting, .unknown:
+        case .poweredOff, .unauthorized, .unsupported:
             if connectContinuation != nil {
                 failConnect(BLEError.bluetoothUnavailable)
             }
@@ -424,6 +424,12 @@ extension BLEConnection: CBCentralManagerDelegate {
                 notifyRadioManagerTransportDidDisconnect(error: BLEError.bluetoothUnavailable)
                 resetConnectionState()
             }
+
+        case .resetting, .unknown:
+            // CoreBluetooth commonly enters these transitional states while creating a
+            // new central manager. Keep an in-flight reconnect alive until its state
+            // becomes definitive instead of reporting a false Bluetooth failure.
+            break
 
         @unknown default:
             break
