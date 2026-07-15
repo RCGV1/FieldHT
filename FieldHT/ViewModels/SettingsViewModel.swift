@@ -29,6 +29,7 @@ public class SettingsViewModel: ObservableObject {
     private var radioController: RadioController?
     private var settingsTask: Task<Void, Never>?
     private var saveTask: Task<Void, Never>?
+    private var pendingSettings: Settings?
     private var pfLoadTask: Task<Void, Never>?
     private var pfSaveTask: Task<Void, Never>?
     private var eventHandler: (() -> Void)?
@@ -64,6 +65,9 @@ public class SettingsViewModel: ObservableObject {
         print("SettingsViewModel: setRadioController called with \(controller == nil ? "nil" : "controller")")
         // Cancel previous tasks
         settingsTask?.cancel()
+        saveTask?.cancel()
+        saveTask = nil
+        pendingSettings = nil
         pfLoadTask?.cancel()
         pfSaveTask?.cancel()
         eventHandler?()
@@ -167,41 +171,42 @@ public class SettingsViewModel: ObservableObject {
         // Optimistic update
         self.settings = newSettings
         
-        // Cancel previous pending save
-        saveTask?.cancel()
-        saveTask = Task {
-            // Debounce: Wait 0.5s before sending
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            
-            if Task.isCancelled { return }
-            
-            await MainActor.run {
-                self.isSaving = true
-                self.errorMessage = nil
-                print("SettingsViewModel: Attempting to save settings: \(newSettings)")
-            }
-            
+        pendingSettings = newSettings
+        guard saveTask == nil else { return }
+
+        saveTask = Task { [weak self, weak radioController] in
+            guard let self, let radioController else { return }
+            await self.flushPendingSettings(using: radioController)
+        }
+    }
+
+    private func flushPendingSettings(using radioController: RadioController) async {
+        while let nextSettings = pendingSettings {
+            pendingSettings = nil
+            isSaving = true
+            errorMessage = nil
+            print("SettingsViewModel: Attempting to save settings: \(nextSettings)")
+
             do {
-                try await radioController.setSettings(newSettings)
-                await MainActor.run {
-                    self.isSaving = false
-                    print("SettingsViewModel: Settings saved successfully")
-                }
+                try await radioController.setSettings(nextSettings)
+                print("SettingsViewModel: Settings saved successfully")
             } catch {
-                if Task.isCancelled { return }
-                await MainActor.run {
-                    self.isSaving = false
-                    self.errorMessage = error.localizedDescription
-                    // Revert on failure? Or just show error?
-                    // Reverting might be annoying if user is still typing/sliding.
-                    // For now, let's just log and show error.
-                    print("SettingsViewModel: Failed to save settings. Error: \(error)")
-                    if let protocolError = error as? ProtocolError, case .commandFailed(let status, let msg) = protocolError {
-                        print("SettingsViewModel: Command Failed Status: \(status), Message: \(msg)")
-                    }
+                errorMessage = error.localizedDescription
+                print("SettingsViewModel: Failed to save settings. Error: \(error)")
+                if let protocolError = error as? ProtocolError,
+                   case .commandFailed(let status, let message) = protocolError {
+                    print("SettingsViewModel: Command Failed Status: \(status), Message: \(message)")
+                }
+
+                if pendingSettings == nil,
+                   let refreshedSettings = try? await radioController.refreshSettings() {
+                    settings = refreshedSettings
                 }
             }
         }
+
+        isSaving = false
+        saveTask = nil
     }
     
     /// Update channelA

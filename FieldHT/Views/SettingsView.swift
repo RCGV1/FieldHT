@@ -153,40 +153,28 @@ struct SettingsView: View {
                         }
 
                         Section {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Label("TX Hold", systemImage: "timer")
-                                    Spacer()
-                                    Text("\(viewModel.settings?.txHoldTime ?? 0)s")
-                                        .monospacedDigit()
-                                        .foregroundColor(.secondary)
-                                }
-                                Slider(
-                                    value: Binding(
-                                        get: { Double(viewModel.settings?.txHoldTime ?? 0) },
-                                        set: { viewModel.updateTxHoldTime(Int($0)) }
-                                    ),
-                                    in: 0...10,
-                                    step: 1
+                            Picker(
+                                "Transmission Hold",
+                                selection: Binding(
+                                    get: { viewModel.settings?.txHoldTime ?? 0 },
+                                    set: { viewModel.updateTxHoldTime($0) }
                                 )
+                            ) {
+                                ForEach(RadioPresentation.txHoldOptions) { option in
+                                    Text(option.label).tag(option.value)
+                                }
                             }
 
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Label("TX Limit", systemImage: "hourglass")
-                                    Spacer()
-                                    Text("\(viewModel.settings?.txTimeLimit ?? 0)s")
-                                        .monospacedDigit()
-                                        .foregroundColor(.secondary)
-                                }
-                                Slider(
-                                    value: Binding(
-                                        get: { Double(viewModel.settings?.txTimeLimit ?? 0) },
-                                        set: { viewModel.updateTxTimeLimit(Int($0)) }
-                                    ),
-                                    in: 0...240,
-                                    step: 30
+                            Picker(
+                                "Time-Out Timer",
+                                selection: Binding(
+                                    get: { viewModel.settings?.txTimeLimit ?? 0 },
+                                    set: { viewModel.updateTxTimeLimit($0) }
                                 )
+                            ) {
+                                ForEach(RadioPresentation.txLimitOptions) { option in
+                                    Text(option.label).tag(option.value)
+                                }
                             }
 
                             Toggle(
@@ -217,6 +205,8 @@ struct SettingsView: View {
                             }
                         } header: {
                             Label("Transmission", systemImage: "antenna.radiowaves.left.and.right")
+                        } footer: {
+                            Text("Transmission Hold keeps the transmitter active briefly after PTT release. Time-Out Timer limits continuous transmission.")
                         }
 
                         Section {
@@ -266,13 +256,9 @@ struct SettingsView: View {
                                     set: { viewModel.updateScreenTimeout($0) }
                                 )
                             ) {
-                                Text("Always On").tag(31)
-                                Text("5s").tag(5)
-                                Text("10s").tag(10)
-                                Text("15s").tag(15)
-                                Text("20s").tag(20)
-                                Text("25s").tag(25)
-                                Text("300s (Max)").tag(300)
+                                ForEach(RadioPresentation.screenTimeoutOptions) { option in
+                                    Text(option.label).tag(option.value)
+                                }
                             } label: {
                                 Label("Screen Timeout", systemImage: "display")
                             }
