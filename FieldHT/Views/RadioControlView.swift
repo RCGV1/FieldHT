@@ -186,34 +186,6 @@ struct RadioControlView: View {
         }
     }
 
-    @ViewBuilder
-    private var activeGroupChannelSection: some View {
-        VStack(alignment: .leading) {
-            Text("Channel in Group")
-                .font(.headline)
-
-            if validChannelModels.isEmpty {
-                Text("No programmed channels in this group")
-                    .foregroundColor(.secondary)
-            } else {
-                Picker("Channel", selection: Binding(
-                    get: { activeMemoryChannel },
-                    set: { setActiveChannel($0) }
-                )) {
-                    ForEach(validChannelModels, id: \.channelID) { channel in
-                        Text(channelMenuLabel(for: channel))
-                            .tag(channel.channelID)
-                    }
-                }
-                .pickerStyle(.menu)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
-                .background(Color(.secondarySystemBackground))
-                .cornerRadius(12)
-            }
-        }
-    }
-
     private var squelchSection: some View {
         VStack(alignment: .leading) {
             HStack {
@@ -268,7 +240,6 @@ struct RadioControlView: View {
             memoryGroupSection
             dualMonitorToggle
             vfoSection
-            activeGroupChannelSection
             quickTogglesSection
             channelNavigationSection
             squelchSection
@@ -438,10 +409,6 @@ struct RadioControlView: View {
             return radioManager.vfoBIndex
         }
         return radioManager.vfoAIndex
-    }
-
-    private func channelMenuLabel(for channel: Channel) -> String {
-        RadioPresentation.channelMenuLabel(channelID: channel.channelID, name: channel.name)
     }
 
     private func previousChannel() {

@@ -72,10 +72,8 @@ struct GlobalStatusToolbar: View {
                     Image(systemName: "mic.fill")
                         .font(.caption)
                         .foregroundColor(radioManager.hmBatteryLevel > 25 ? .green : (radioManager.hmBatteryLevel > 10 ? .orange : .red))
-                    Text("\(radioManager.hmBatteryLevel)%")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 }
+                .accessibilityLabel("Speaker mic connected")
             }
 
             if radioManager.isBluetoothAudioConnected {
@@ -86,10 +84,8 @@ struct GlobalStatusToolbar: View {
                     Image(systemName: "phone.connection.fill")
                         .font(.caption)
                         .foregroundColor(.blue)
-                    Text("BT Audio")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 }
+                .accessibilityLabel("Bluetooth audio connected")
             }
         }
         .padding(.horizontal, 8)
