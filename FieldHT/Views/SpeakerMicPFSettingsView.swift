@@ -64,7 +64,7 @@ struct SpeakerMicPFSettingsView: View {
         Form {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("BS22 Mic Button Setup")
+                    Text("BS-22 Speaker Mic Button Setup")
                         .font(.headline)
                     Text("Pick a physical button first, then assign the actions the mic actually exposes for it.")
                         .font(.footnote)
@@ -218,8 +218,8 @@ struct SpeakerMicPFSettingsView: View {
         switch buttonID {
         case 0: return "Button 1"
         case 1: return "Button 2"
-        case 2: return "Button 3"
-        case 3: return "Button 4"
+        case 2: return "Up"
+        case 3: return "Down"
         default: return "Button \(buttonID + 1)"
         }
     }
@@ -270,7 +270,7 @@ struct SpeakerMicPFSettingsView: View {
         case .long:
             return "Long Press"
         case .lowToHigh:
-            return "Edge Trigger"
+            return "Press Down"
         default:
             return "\(action)"
         }

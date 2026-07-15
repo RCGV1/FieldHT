@@ -32,6 +32,16 @@ enum RadioPresentationTests {
             "Speaker Mic",
             "unknown accessory uses generic copy"
         )
+        expectEqual(
+            PFEffectType.toggleOffline.displayName,
+            "Toggle Talk Around",
+            "talk-around effect uses radio terminology"
+        )
+        expectEqual(
+            PFEffectType.prevRegion.displayName,
+            "Previous Group",
+            "group navigation is not labeled as a region"
+        )
 
         if failures > 0 {
             exit(1)
