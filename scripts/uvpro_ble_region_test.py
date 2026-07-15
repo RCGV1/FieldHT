@@ -188,14 +188,13 @@ def decode_dev_info_region_count(body: bytes) -> int:
 
 
 async def discover_services(client: Any) -> Any:
-    """Return Bleak service collection, performing discovery if needed.
-
-    bleak 2.x removed BleakClient.get_services(). Service discovery is implemented
-    in the backend as a private method.
-    """
+    """Return Bleak service collection across supported Bleak releases."""
     try:
         return client.services
     except Exception:
+        legacy_getter = getattr(client, "get_services", None)
+        if legacy_getter is not None:
+            return await legacy_getter()
         backend = getattr(client, "_backend", None)
         getter = getattr(backend, "_get_services", None)
         if getter is None:
