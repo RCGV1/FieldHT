@@ -45,15 +45,21 @@ struct GlobalStatusToolbar: View {
             Divider()
                 .frame(height: 12)
             
-            HStack(spacing: 4) {
-                Image(systemName: batteryIcon)
-                    .foregroundColor(batteryColor)
-                .font(.caption)
-                Text("\(radioManager.batteryLevel)%")
+            if hasValidBattery {
+                HStack(spacing: 4) {
+                    Image(systemName: batteryIcon)
+                        .foregroundColor(batteryColor)
                     .font(.caption)
-                    .foregroundColor(.secondary)
-                Text(String(format: "(%.1fV)", radioManager.batteryVoltage))
-                    .font(.caption2)
+                    Text("\(radioManager.batteryLevel)%")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(String(format: "(%.1fV)", radioManager.batteryVoltage))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            } else {
+                Label("Battery --", systemImage: "battery.slash")
+                    .font(.caption)
                     .foregroundColor(.secondary)
             }
 
@@ -98,6 +104,10 @@ struct GlobalStatusToolbar: View {
         if level > 25 { return "battery.50" }
         if level > 10 { return "battery.25" }
         return "battery.0"
+    }
+
+    private var hasValidBattery: Bool {
+        (1...100).contains(radioManager.batteryLevel) && radioManager.batteryVoltage > 0
     }
 
     private var batteryColor: Color {

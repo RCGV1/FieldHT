@@ -16,9 +16,9 @@ struct RSSILinearGauge: View {
                 value: Double(rssi),
                 in: 0...100
             ) {
-                Text("RSSI")
+                Text("S Meter")
             } currentValueLabel: {
-                Text("\(rssi)%")
+                Text(RadioPresentation.sMeterLabel(forPercent: rssi))
                     .monospacedDigit()
             }
             .gaugeStyle(.linearCapacity)

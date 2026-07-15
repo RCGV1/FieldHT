@@ -14,24 +14,6 @@ struct RadioControlView: View {
 
 
 
-    // MARK: - RSSI Configuration
-    private let minRSSI: Double = -120
-    private let maxRSSI: Double = 0
-
-    private var clampedRSSI: Double {
-        min(max(Double(radioManager.rssi), minRSSI), maxRSSI)
-    }
-
-    private var rssiColor: Color {
-        if radioManager.rssi >= -60 {
-            return .green
-        } else if radioManager.rssi >= -90 {
-            return .yellow
-        } else {
-            return .red
-        }
-    }
-
     private func memoryGroupDisplayName(index: Int) -> String {
         guard index >= 0, index < radioManager.regionNames.count else {
             return "Unnamed"
@@ -182,18 +164,53 @@ struct RadioControlView: View {
     }
 
     private var channelNavigationSection: some View {
-        HStack(spacing: 40) {
-            Button(action: previousChannel) {
-                Image(systemName: "arrowshape.backward.fill")
-                    .font(.system(size: 44))
-            }
-            .disabled(validChannels.isEmpty)
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Channel Navigation")
+                .font(.headline)
 
-            Button(action: nextChannel) {
-                Image(systemName: "arrowshape.forward.fill")
-                    .font(.system(size: 44))
+            HStack(spacing: 12) {
+                Button(action: previousChannel) {
+                    Label("Previous", systemImage: "chevron.left")
+                }
+                .buttonStyle(.bordered)
+                .disabled(validChannels.isEmpty)
+
+                Button(action: nextChannel) {
+                    Label("Next", systemImage: "chevron.right")
+                }
+                .buttonStyle(.bordered)
+                .disabled(validChannels.isEmpty)
+
+                Spacer()
             }
-            .disabled(validChannels.isEmpty)
+        }
+    }
+
+    @ViewBuilder
+    private var activeGroupChannelSection: some View {
+        VStack(alignment: .leading) {
+            Text("Channel in Group")
+                .font(.headline)
+
+            if validChannelModels.isEmpty {
+                Text("No programmed channels in this group")
+                    .foregroundColor(.secondary)
+            } else {
+                Picker("Channel", selection: Binding(
+                    get: { activeMemoryChannel },
+                    set: { setActiveChannel($0) }
+                )) {
+                    ForEach(validChannelModels, id: \.channelID) { channel in
+                        Text(channelMenuLabel(for: channel))
+                            .tag(channel.channelID)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+                .background(Color(.secondarySystemBackground))
+                .cornerRadius(12)
+            }
         }
     }
 
@@ -251,6 +268,7 @@ struct RadioControlView: View {
             memoryGroupSection
             dualMonitorToggle
             vfoSection
+            activeGroupChannelSection
             quickTogglesSection
             channelNavigationSection
             squelchSection
@@ -405,21 +423,32 @@ struct RadioControlView: View {
 
     // MARK: - Channel Navigation Helpers
 
-    private var validChannels: [Int] {
+    private var validChannelModels: [Channel] {
         radioManager.channels
             .filter { $0.channelID < 250 && $0.rxFreq != 0.0 }
-            .map(\.channelID)
+            .sorted { $0.channelID < $1.channelID }
     }
 
-    private var activeChannelIndex: Int {
-        radioManager.activeChannel == .a
-        ? radioManager.vfoAIndex
-        : radioManager.vfoBIndex
+    private var validChannels: [Int] {
+        validChannelModels.map(\.channelID)
+    }
+
+    private var activeMemoryChannel: Int {
+        if radioManager.isDualWatchOn, radioManager.activeChannel == .b {
+            return radioManager.vfoBIndex
+        }
+        return radioManager.vfoAIndex
+    }
+
+    private func channelMenuLabel(for channel: Channel) -> String {
+        let name = channel.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = name.isEmpty ? "Unnamed channel" : name
+        return "(channel.channelID + 1). (displayName)"
     }
 
     private func previousChannel() {
         guard !validChannels.isEmpty else { return }
-        let current = activeChannelIndex
+        let current = activeMemoryChannel
         guard let pos = validChannels.firstIndex(of: current) else {
             setActiveChannel(validChannels.last!)
             return
@@ -430,7 +459,7 @@ struct RadioControlView: View {
 
     private func nextChannel() {
         guard !validChannels.isEmpty else { return }
-        let current = activeChannelIndex
+        let current = activeMemoryChannel
         guard let pos = validChannels.firstIndex(of: current) else {
             setActiveChannel(validChannels.first!)
             return
@@ -440,7 +469,7 @@ struct RadioControlView: View {
     }
 
     private func setActiveChannel(_ index: Int) {
-        if radioManager.activeChannel == .b {
+        if radioManager.isDualWatchOn, radioManager.activeChannel == .b {
             radioManager.setChannelB(index)
         } else {
             radioManager.setChannelA(index)
