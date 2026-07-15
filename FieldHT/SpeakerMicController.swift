@@ -43,7 +43,7 @@ public final class SpeakerMicController: ObservableObject {
 
     public var productSummary: String {
         if isBS22 {
-            return "BS22 Mic"
+            return "BS-22 Speaker Mic"
         }
         if deviceInfo.productID > 0 {
             return "PID \(deviceInfo.productID)"
@@ -57,7 +57,7 @@ public final class SpeakerMicController: ObservableObject {
 
     public var modelName: String {
         if isBS22 {
-            return "BS22 Mic"
+            return "BS-22 Speaker Mic"
         }
         if deviceInfo.productID > 0 {
             return "Unsupported Mic (PID \(deviceInfo.productID))"

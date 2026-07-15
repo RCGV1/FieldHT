@@ -20,6 +20,13 @@ struct SpeakerMicView: View {
         return accessoryController
     }
 
+    private var speakerMicName: String {
+        RadioPresentation.speakerMicName(
+            model: accessoryController?.productSummary,
+            isBS22: accessoryController?.isBS22 == true
+        )
+    }
+
     private var isSpeakerMicAvailableThroughRadio: Bool {
         radioManager.isSpeakerMicConnected
     }
@@ -136,16 +143,16 @@ struct SpeakerMicView: View {
                                 }
                             }
 
-                            Button("Disconnect BS22 Mic", role: .destructive) {
+                            Button("Disconnect Speaker Mic", role: .destructive) {
                                 radioManager.disconnectSpeakerMic()
                             }
                         } else if radioManager.isSpeakerMicConnecting {
-                            ProgressView("Connecting to BS22 Mic...")
+                            ProgressView("Connecting to speaker mic...")
                         } else if let savedAccessory {
                             Button {
                                 connectAccessory(savedAccessory)
                             } label: {
-                                Label("Reconnect BS22 Mic", systemImage: "link.badge.plus")
+                                Label("Reconnect Speaker Mic", systemImage: "link.badge.plus")
                             }
                         }
 
@@ -155,7 +162,7 @@ struct SpeakerMicView: View {
                                 .foregroundStyle(.orange)
                         }
                     } header: {
-                        Text("BS22 Mic")
+                        Text("Speaker Mic")
                     }
 
                     if accessoryController?.isConnected != true {
@@ -166,9 +173,9 @@ struct SpeakerMicView: View {
                                 hintRow(title: "Bluetooth is off", detail: "Turn it on to discover the speaker mic.")
                             } else if nearbyAccessoryCandidates.isEmpty {
                                 hintRow(
-                                    title: isScanningForAccessories ? "Looking for BS22 mics..." : "No BS22 mic found",
+                                    title: isScanningForAccessories ? "Looking for speaker mics..." : "No speaker mic found",
                                     detail: isSavedAccessoryAvailable
-                                        ? "This screen will try the last BS22 automatically. Scan if you want to pick a different one."
+                                        ? "This screen will try the last speaker mic automatically. Scan if you want to pick a different one."
                                         : "The radio can still use the speaker mic on its own. Connect directly only when you want battery, firmware, or button setup."
                                 )
                             } else {
@@ -192,9 +199,9 @@ struct SpeakerMicView: View {
                                 }
                             }
                         } header: {
-                            Text("Direct BS22 Connection")
+                            Text("Direct Speaker Mic Connection")
                         } footer: {
-                            Text("FieldHT currently supports direct setup for the BS22 mic only. It will try to reconnect the last one automatically when this screen opens.")
+                            Text("FieldHT currently supports direct button setup for the BS-22 only. It will try to reconnect the last speaker mic automatically when this screen opens.")
                         }
                     }
 
@@ -203,21 +210,21 @@ struct SpeakerMicView: View {
                             NavigationLink {
                                 SpeakerMicPFSettingsView(controller: accessoryController)
                             } label: {
-                                Label("Configure BS22 Buttons", systemImage: "button.programmable")
+                                Label("Configure BS-22 Buttons", systemImage: "button.programmable")
                             }
                         } header: {
                             Text("Button Setup")
                         } footer: {
-                            Text("Button mappings come from the BS22 mic itself, not the radio.")
+                            Text("Button mappings come from the BS-22 speaker mic itself, not the radio.")
                         }
                     }
 
                     Section {
                         Picker(selection: hmSpeakerBinding) {
-                            Text("Off").tag(0)
-                            Text("Mode 1").tag(1)
-                            Text("Mode 2").tag(2)
-                            Text("Mode 3").tag(3)
+                            Text("Automatic").tag(0)
+                            Text("Audio Mode 1").tag(1)
+                            Text("Audio Mode 2").tag(2)
+                            Text("Audio Mode 3").tag(3)
                         } label: {
                             Label("Speaker-Mic Audio", systemImage: "speaker.wave.3")
                         }
@@ -225,23 +232,23 @@ struct SpeakerMicView: View {
                         if radioManager.isBluetoothAudioConnected {
                             Picker(selection: btMicGainBinding) {
                                 ForEach(0..<8) { i in
-                                    Text("\(i)").tag(i)
+                                    Text("Level \(i)").tag(i)
                                 }
                             } label: {
                                 Label("BT Mic Gain", systemImage: "mic.and.signal.meter")
                             }
 
                             Picker(selection: aghfpCallModeBinding) {
-                                Text("Auto").tag(0)
-                                Text("Manual").tag(1)
+                                Text("Voice").tag(0)
+                                Text("Phone").tag(1)
                             } label: {
-                                Label("AGHFP Call Mode", systemImage: "phone")
+                                Label("Headset Mode", systemImage: "phone")
                             }
                         }
                     } header: {
                         Text("Audio Routing")
                     } footer: {
-                        Text("Use this to route audio between the radio, the speaker mic, and Bluetooth audio.")
+                        Text("Automatic preserves the radio's normal routing. Headset Mode selects Voice or Phone behavior for supported Bluetooth headsets.")
                     }
                 }
             } else if let error = viewModel.errorMessage {
@@ -312,7 +319,7 @@ struct SpeakerMicView: View {
 
     private var statusText: String {
         if hasDirectAccessoryLink {
-            return "BS22 Mic connected"
+            return "\(speakerMicName) connected"
         }
         if isSpeakerMicAvailableThroughRadio {
             return "Detected through radio"
@@ -346,7 +353,7 @@ struct SpeakerMicView: View {
         if radioManager.isSpeakerMicConnecting {
             HStack(spacing: 12) {
                 ProgressView()
-                Text("Connecting to BS22 Mic...")
+                Text("Connecting to speaker mic...")
                     .foregroundStyle(.secondary)
             }
         } else if let savedAccessory {
@@ -354,7 +361,7 @@ struct SpeakerMicView: View {
                 Button {
                     connectAccessory(savedAccessory)
                 } label: {
-                    Label("Reconnect Last BS22", systemImage: "link.badge.plus")
+                    Label("Reconnect Last Speaker Mic", systemImage: "link.badge.plus")
                 }
 
                 Button {
@@ -365,7 +372,7 @@ struct SpeakerMicView: View {
                     }
                 } label: {
                     Label(
-                        isScanningForAccessories ? "Stop Scan" : "Find Another BS22",
+                    isScanningForAccessories ? "Stop Scan" : "Find Another Speaker Mic",
                         systemImage: isScanningForAccessories ? "stop.circle" : "dot.radiowaves.left.and.right"
                     )
                 }
@@ -380,7 +387,7 @@ struct SpeakerMicView: View {
                 }
             } label: {
                 Label(
-                    isScanningForAccessories ? "Stop Scan" : "Find BS22 Mic",
+                    isScanningForAccessories ? "Stop Scan" : "Find Speaker Mic",
                     systemImage: isScanningForAccessories ? "stop.circle" : "dot.radiowaves.left.and.right"
                 )
             }

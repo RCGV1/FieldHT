@@ -93,10 +93,10 @@ struct SettingsView: View {
                                 )
                             ) {
                                 ForEach(0..<5) { i in
-                                    Text("\(i)").tag(i)
+                                    Text("Level \(i)").tag(i)
                                 }
                             } label: {
-                                Label("Mic Gain", systemImage: "mic")
+                                Label("Radio Mic Gain", systemImage: "mic")
                             }
 
                             Picker(
@@ -305,16 +305,7 @@ struct SettingsView: View {
                                     set: { viewModel.updateKeepAghfpLink($0) }
                                 )
                             ) {
-                                Label("Keep AGHFP Link", systemImage: "link")
-                            }
-
-                            Toggle(
-                                isOn: Binding(
-                                    get: { viewModel.settings?.adaptiveResponse ?? false },
-                                    set: { viewModel.updateAdaptiveResponse($0) }
-                                )
-                            ) {
-                                Label("Adaptive Response", systemImage: "sparkles")
+                                Label("Keep Headset Connected", systemImage: "link")
                             }
 
                             Toggle(
@@ -323,7 +314,7 @@ struct SettingsView: View {
                                     set: { viewModel.updateDisTone($0) }
                                 )
                             ) {
-                                Label("Disable Tone", systemImage: "speaker.slash")
+                                Label("Disable Key and Operation Tones", systemImage: "speaker.slash")
                             }
 
                             Toggle(
