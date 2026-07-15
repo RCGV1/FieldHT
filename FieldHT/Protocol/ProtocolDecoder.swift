@@ -25,6 +25,14 @@ public struct ProtocolDecoder {
             body: bodyData
         )
     }
+
+    // MARK: - APRS Path Decoding
+
+    public static func decodeAPRSPath(_ data: Data) -> String {
+        let pathData = Data(data.prefix { $0 != 0 })
+        return String(decoding: pathData, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
     
     // MARK: - Device Info Decoding
     

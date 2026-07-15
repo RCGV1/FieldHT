@@ -21,6 +21,8 @@ struct BeaconSettingsView: View {
     @State private var aprsSSID: Int = 0
     @State private var aprsSymbol: String = ""
     @State private var beaconMessage: String = ""
+    @State private var aprsPath: String = ""
+    @State private var supportsAPRSPath = false
     
     @State private var shouldShareLocation: Bool = false
     @State private var pttReleaseSendLocation: Bool = false
@@ -95,6 +97,33 @@ struct BeaconSettingsView: View {
                     if packetFormat == .aprs {
                         Toggle("Enable Mic-E", isOn: $micEEnabled)
                         Toggle("Send ID by APRS", isOn: $sendIDByAPRS)
+                    }
+                }
+
+                if packetFormat == .aprs, supportsAPRSPath {
+                    Section(header: Text("APRS Path"), footer: Text("The path controls which digipeaters relay an APRS packet. FieldHT keeps up to eight path entries, matching the radio programmer.")) {
+                        TextField("WIDE1-1,WIDE2-1", text: $aprsPath)
+                            .textInputAutocapitalization(.characters)
+                            .disableAutocorrection(true)
+
+                        Menu("Use a Common Path") {
+                            ForEach(commonAPRSPaths, id: \.self) { path in
+                                Button(path) {
+                                    aprsPath = path
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if packetFormat == .aprs {
+                    Section("APRS Internet") {
+                        NavigationLink {
+                            APRSIGateSettingsView()
+                                .environmentObject(radioManager)
+                        } label: {
+                            Label("Internet Gateway", systemImage: "network")
+                        }
                     }
                 }
                 
@@ -230,6 +259,12 @@ struct BeaconSettingsView: View {
                 } else {
                     self.supportsSmartBeaconIntervals = false
                 }
+                do {
+                    self.aprsPath = try await radioManager.getAPRSPath()
+                    self.supportsAPRSPath = true
+                } catch {
+                    self.supportsAPRSPath = false
+                }
                 self.isLoading = false
             } catch {
                 print("Error loading beacon settings: \(error)")
@@ -270,6 +305,9 @@ struct BeaconSettingsView: View {
         Task {
             do {
                 try await radioManager.setBeaconSettings(updatedSettings)
+                if supportsAPRSPath {
+                    try await radioManager.setAPRSPath(aprsPath)
+                }
                 self.settings = updatedSettings
                 isSaving = false
             } catch {
@@ -278,6 +316,14 @@ struct BeaconSettingsView: View {
             }
         }
     }
+
+    private let commonAPRSPaths = [
+        "WIDE1-1,WIDE2-1",
+        "WIDE1-1,WIDE2-2",
+        "WIDE2-1",
+        "WIDE2-2",
+        "ARISS,SGATE,WIDE2-1"
+    ]
 }
 
 #Preview {

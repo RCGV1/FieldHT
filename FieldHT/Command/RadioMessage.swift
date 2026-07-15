@@ -18,6 +18,7 @@ public enum ReplyMessage {
     case batteryLevelAsPercentage(Int)
     case rcBatteryLevel(Int)
     case beaconSettings(BeaconSettings)
+    case aprsPath(String)
     case regionName(String)
     case pf(PFConfig)
     case pfActions(Data)

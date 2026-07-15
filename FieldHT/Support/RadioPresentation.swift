@@ -30,6 +30,12 @@ enum RadioPresentation {
         RadioChoice(value: value, label: "\(value * 10) seconds")
     }
 
+    static let micGainOptions: [RadioChoice] = (0...7).map { value in
+        let decibels = value * 3
+        let label = decibels == 0 ? "0 dB" : "+\(decibels) dB"
+        return RadioChoice(value: value, label: label)
+    }
+
     static func sMeterLabel(forPercent value: Int) -> String {
         let clamped = min(max(value, 0), 100)
         if clamped >= 96 {

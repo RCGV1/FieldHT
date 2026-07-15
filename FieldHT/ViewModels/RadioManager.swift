@@ -1292,4 +1292,18 @@ public class RadioManager: ObservableObject {
         }
         try await controller.setBeaconSettings(settings)
     }
+
+    public func getAPRSPath() async throws -> String {
+        guard let controller = radioController else {
+            throw RadioError.stateNotInitialized
+        }
+        return try await controller.getAPRSPath()
+    }
+
+    public func setAPRSPath(_ path: String) async throws {
+        guard let controller = radioController else {
+            throw RadioError.stateNotInitialized
+        }
+        try await controller.setAPRSPath(path)
+    }
 }

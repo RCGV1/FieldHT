@@ -43,6 +43,11 @@ enum RadioPresentationTests {
             "time-out timer options must fit the current five-bit field"
         )
         expectEqual(
+            RadioPresentation.micGainOptions.map(\.label),
+            ["0 dB", "+3 dB", "+6 dB", "+9 dB", "+12 dB", "+15 dB", "+18 dB", "+21 dB"],
+            "microphone gain uses the radio's dB steps instead of opaque levels"
+        )
+        expectEqual(
             RadioPresentation.speakerMicName(model: nil, isBS22: false),
             "Speaker Mic",
             "unknown accessory uses generic copy"

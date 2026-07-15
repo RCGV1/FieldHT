@@ -110,8 +110,8 @@ struct SettingsView: View {
                                     set: { viewModel.updateMicGain($0) }
                                 )
                             ) {
-                                ForEach(0..<5) { i in
-                                    Text("Level \(i)").tag(i)
+                                ForEach(RadioPresentation.micGainOptions) { option in
+                                    Text(option.label).tag(option.value)
                                 }
                             } label: {
                                 Label("Radio Mic Gain", systemImage: "mic")

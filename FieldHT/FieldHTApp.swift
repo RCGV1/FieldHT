@@ -30,7 +30,17 @@ struct FieldHTApp: App {
                     notificationManager.requestPermission()
                     notificationManager.performPendingActionsIfNeeded()
                     RadioIntentBridge.shared.manager = radioManager
+                    APRSIGateService.shared.apply(
+                        configuration: APRSIGateSettingsStore.shared.configuration,
+                        radioController: radioManager.radioController
+                    )
                 }
+            .onChange(of: radioManager.isConnected) { _, _ in
+                APRSIGateService.shared.apply(
+                    configuration: APRSIGateSettingsStore.shared.configuration,
+                    radioController: radioManager.radioController
+                )
+            }
                 .task {
                     try? Tips.configure([
                         .displayFrequency(.immediate)

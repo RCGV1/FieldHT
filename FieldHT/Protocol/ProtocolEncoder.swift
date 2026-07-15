@@ -87,6 +87,39 @@ public struct ProtocolEncoder {
         }
     }
 
+    // MARK: - APRS Path Encoding
+
+    /// Matches the official programmer's repeater-path normalization before SET_APRS_PATH.
+    public static func encodeAPRSPath(_ path: String) -> Data {
+        Data(normalizedAPRSPath(path).utf8)
+    }
+
+    private static func normalizedAPRSPath(_ path: String) -> String {
+        let allowedCharacters = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789,-")
+        let cleaned = String(path.filter { allowedCharacters.contains($0) })
+
+        return cleaned
+            .split(separator: ",", omittingEmptySubsequences: true)
+            .prefix(8)
+            .compactMap { rawPart in
+                let part = String(rawPart)
+                guard let hyphen = part.firstIndex(of: "-") else {
+                    return part.isEmpty ? nil : part
+                }
+
+                let callsign = String(part[..<hyphen])
+                guard !callsign.isEmpty else { return nil }
+
+                var ssidText = String(part[part.index(after: hyphen)...].prefix(2))
+                if ssidText.count > 1, !ssidText.dropFirst().allSatisfy(\.isNumber) {
+                    ssidText = String(ssidText.prefix(1))
+                }
+                let ssid = min(Int(ssidText) ?? 0, 8)
+                return ssid > 0 ? "\(callsign)-\(ssid)" : callsign
+            }
+            .joined(separator: ",")
+    }
+
     private static func clampUInt30(_ value: Int) -> Int {
         if value <= 0 { return 0 }
         let max = (1 << 30) - 1

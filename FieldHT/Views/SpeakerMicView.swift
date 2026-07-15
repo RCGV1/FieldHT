@@ -231,8 +231,8 @@ struct SpeakerMicView: View {
 
                         if radioManager.isBluetoothAudioConnected {
                             Picker(selection: btMicGainBinding) {
-                                ForEach(0..<8) { i in
-                                    Text("Level \(i)").tag(i)
+                                ForEach(RadioPresentation.micGainOptions) { option in
+                                    Text(option.label).tag(option.value)
                                 }
                             } label: {
                                 Label("BT Mic Gain", systemImage: "mic.and.signal.meter")

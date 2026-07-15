@@ -539,6 +539,14 @@ public class RadioController: ObservableObject {
             self.state = currentState
         }
     }
+
+    public func getAPRSPath() async throws -> String {
+        try await connection.getAPRSPath()
+    }
+
+    public func setAPRSPath(_ path: String) async throws {
+        try await connection.setAPRSPath(path)
+    }
     
     /// Set settings
     public func setSettings(_ newSettings: Settings) async throws {
@@ -609,17 +617,13 @@ public class RadioController: ObservableObject {
     
     /// Send TNC data
     public func sendTncData(_ data: Data) async throws {
-        if data.count > 50 {
+        if data.count > 330 {
             throw RadioError.dataTooLong
         }
-        
-        let fragment = TncDataFragment(
-            isFinalFragment: true,
-            fragmentID: 0,
-            data: data
-        )
-        
-        try await connection.sendTncDataFragment(fragment)
+
+        for fragment in TncDataFragment.fragments(for: data) {
+            try await connection.sendTncDataFragment(fragment)
+        }
     }
     
     /// Set region name
@@ -839,7 +843,7 @@ public enum RadioError: LocalizedError {
         case .connectionFailed:
             return "Connection failed"
         case .dataTooLong:
-            return "Data too long (max 50 bytes). Fragmentation not yet implemented."
+            return "Data too long (max 330 bytes)."
         }
     }
 }

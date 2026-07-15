@@ -80,6 +80,18 @@ enum BeaconSettingsProtocolTests {
         )
         expectEqual(ProtocolEncoder.encodeBeaconSettings(legacy).count, 50, "legacy beacon settings retain their existing payload size")
 
+        let aprsPath = "WIDE1-1,WIDE2-99,custom!"
+        expectEqual(
+            String(data: ProtocolEncoder.encodeAPRSPath(aprsPath), encoding: .utf8),
+            "WIDE1-1,WIDE2-8,custom",
+            "APRS path matches the vendor app's repeater sanitization"
+        )
+        expectEqual(
+            ProtocolDecoder.decodeAPRSPath(Data("WIDE1-1,WIDE2-2\0".utf8)),
+            "WIDE1-1,WIDE2-2",
+            "APRS path replies trim radio null padding"
+        )
+
         if failures > 0 {
             exit(1)
         }

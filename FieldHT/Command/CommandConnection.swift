@@ -474,6 +474,20 @@ public class CommandConnection: BLEConnectionDelegate {
                 return .error(replyStatus, "Failed to set beacon settings")
             }
             return .success
+
+        case (.basic, BasicCommand.getAPRSPath.rawValue):
+            let replyStatus = try decodeReplyStatus(message.body)
+            guard replyStatus == .success else {
+                return .error(replyStatus, "Failed to get APRS path")
+            }
+            return .aprsPath(ProtocolDecoder.decodeAPRSPath(Data(message.body.dropFirst(1))))
+
+        case (.basic, BasicCommand.setAPRSPath.rawValue):
+            let replyStatus = try decodeReplyStatus(message.body)
+            guard replyStatus == .success else {
+                return .error(replyStatus, "Failed to set APRS path")
+            }
+            return .success
             
         case (.basic, BasicCommand.htSendData.rawValue):
             let replyStatus = try decodeReplyStatus(message.body)
@@ -1064,6 +1078,38 @@ public class CommandConnection: BLEConnectionDelegate {
             body: body
         )
         
+        guard case .reply(.success) = reply else {
+            if case .reply(.error(let status, let message)) = reply {
+                throw ProtocolError.commandFailed(status, message)
+            }
+            throw ProtocolError.invalidReply
+        }
+    }
+
+    public func getAPRSPath() async throws -> String {
+        let reply = try await sendCommandAndWaitForReply(
+            commandGroup: .basic,
+            command: BasicCommand.getAPRSPath.rawValue,
+            body: Data()
+        )
+
+        guard case .reply(.aprsPath(let path)) = reply else {
+            if case .reply(.error(let status, let message)) = reply {
+                throw ProtocolError.commandFailed(status, message)
+            }
+            throw ProtocolError.invalidReply
+        }
+
+        return path
+    }
+
+    public func setAPRSPath(_ path: String) async throws {
+        let reply = try await sendCommandAndWaitForReply(
+            commandGroup: .basic,
+            command: BasicCommand.setAPRSPath.rawValue,
+            body: ProtocolEncoder.encodeAPRSPath(path)
+        )
+
         guard case .reply(.success) = reply else {
             if case .reply(.error(let status, let message)) = reply {
                 throw ProtocolError.commandFailed(status, message)
