@@ -897,23 +897,21 @@ public class RadioManager: ObservableObject {
                 var updatedSettings = try await controller.refreshSettings()
                 updatedSettings.scan = shouldScan
 
-                var modeTask: Task<Void, Never>?
+                var shouldSetRadioMode = false
                 if shouldScan {
                     updatedSettings.doubleChannel = ChannelType.off.toProtocolValue()
-                    modeTask = Task {
-                        try? await controller.setRadioMode(0)
-                    }
+                    shouldSetRadioMode = true
                 } else if let returnMode = scanReturnDoubleChannel {
                     updatedSettings.doubleChannel = returnMode
-                    modeTask = Task {
-                        try? await controller.setRadioMode(0)
-                    }
+                    shouldSetRadioMode = true
                 }
 
                 print("RadioManager: Scan write settings channelA=\(updatedSettings.channelA) channelB=\(updatedSettings.channelB) scan=\(updatedSettings.scan) doubleChannel=\(updatedSettings.doubleChannel)")
 
                 try await controller.setSettings(updatedSettings)
-                await modeTask?.value
+                if shouldSetRadioMode {
+                    try await controller.setRadioMode(0)
+                }
 
                 if !shouldScan {
                     scanReturnDoubleChannel = nil
