@@ -49,7 +49,7 @@ public struct ProtocolDecoder {
         let channelCount = try stream.readInt(8)
         let freqRangeCount = try stream.readInt(4)
         _ = try stream.readBool() // supportNoiseReduction (not in DeviceInfo model)
-        _ = try stream.readBool() // supportSmartBeacon (not in DeviceInfo model)
+        let supportSmartBeacon = try stream.readBool()
         _ = try stream.readInt(2) // pad
         
         return DeviceInfo(
@@ -69,7 +69,8 @@ public struct ProtocolDecoder {
             supportsVFO: supportVfo,
             supportsDMR: supportDmr,
             channelCount: channelCount,
-            frequencyRangeCount: freqRangeCount
+            frequencyRangeCount: freqRangeCount,
+            supportsSmartBeacon: supportSmartBeacon
         )
     }
     
@@ -430,7 +431,10 @@ public struct ProtocolDecoder {
         let allowPositionCheck = try stream.readBool()
         _ = try stream.readInt(1) // pad
         let aprsSSID = try stream.readInt(4)
-        _ = try stream.readInt(4) // pad2
+        let smartBeaconEnabled = try stream.readBool()
+        let micEEnabled = try stream.readBool()
+        let sendIDByAPRS = try stream.readBool()
+        _ = try stream.readInt(1) // reserved
         let locationShareInterval = try stream.readInt(8) * 10
         let bssUserIDLower = try stream.readInt(32)
         
@@ -452,6 +456,14 @@ public struct ProtocolDecoder {
         if stream.remaining >= 32 {
             bssUserIDUpper = try stream.readInt(32)
         }
+
+        var smartBeaconMinimumInterval: Int?
+        var smartBeaconMaximumInterval: Int?
+        if stream.remaining >= 16 {
+            smartBeaconMinimumInterval = try stream.readInt(4)
+            smartBeaconMaximumInterval = try stream.readInt(5)
+            _ = try stream.readInt(7) // reserved
+        }
         
         let bssUserID = (bssUserIDUpper << 32) | bssUserIDLower
         
@@ -471,7 +483,12 @@ public struct ProtocolDecoder {
             pttReleaseIDInfo: pttReleaseIDInfo,
             beaconMessage: beaconMessage,
             aprsSymbol: aprsSymbol,
-            aprsCallsign: aprsCallsign
+            aprsCallsign: aprsCallsign,
+            smartBeaconEnabled: smartBeaconEnabled,
+            micEEnabled: micEEnabled,
+            sendIDByAPRS: sendIDByAPRS,
+            smartBeaconMinimumInterval: smartBeaconMinimumInterval,
+            smartBeaconMaximumInterval: smartBeaconMaximumInterval
         )
     }
     

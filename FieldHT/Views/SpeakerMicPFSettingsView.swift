@@ -270,7 +270,7 @@ struct SpeakerMicPFSettingsView: View {
         case .long:
             return "Long Press"
         case .lowToHigh:
-            return "Press Down"
+            return "Press Down (Physical Press)"
         default:
             return "\(action)"
         }

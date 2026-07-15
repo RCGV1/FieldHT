@@ -441,9 +441,7 @@ struct RadioControlView: View {
     }
 
     private func channelMenuLabel(for channel: Channel) -> String {
-        let name = channel.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let displayName = name.isEmpty ? "Unnamed channel" : name
-        return "(channel.channelID + 1). (displayName)"
+        RadioPresentation.channelMenuLabel(channelID: channel.channelID, name: channel.name)
     }
 
     private func previousChannel() {

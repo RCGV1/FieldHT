@@ -35,6 +35,11 @@ public struct BeaconSettings: Codable, Equatable {
     public var packetFormat: PacketFormat
     public var allowPositionCheck: Bool
     public var aprsSSID: Int
+    public var smartBeaconEnabled: Bool
+    public var micEEnabled: Bool
+    public var sendIDByAPRS: Bool
+    public var smartBeaconMinimumInterval: Int?
+    public var smartBeaconMaximumInterval: Int?
     public var locationShareInterval: Int
     public var bssUserID: Int
     public var pttReleaseIDInfo: String
@@ -58,7 +63,12 @@ public struct BeaconSettings: Codable, Equatable {
         pttReleaseIDInfo: String,
         beaconMessage: String,
         aprsSymbol: String,
-        aprsCallsign: String
+        aprsCallsign: String,
+        smartBeaconEnabled: Bool = false,
+        micEEnabled: Bool = false,
+        sendIDByAPRS: Bool = false,
+        smartBeaconMinimumInterval: Int? = nil,
+        smartBeaconMaximumInterval: Int? = nil
     ) {
         self.maxFwdTimes = maxFwdTimes
         self.timeToLive = timeToLive
@@ -70,6 +80,11 @@ public struct BeaconSettings: Codable, Equatable {
         self.packetFormat = packetFormat
         self.allowPositionCheck = allowPositionCheck
         self.aprsSSID = aprsSSID
+        self.smartBeaconEnabled = smartBeaconEnabled
+        self.micEEnabled = micEEnabled
+        self.sendIDByAPRS = sendIDByAPRS
+        self.smartBeaconMinimumInterval = smartBeaconMinimumInterval
+        self.smartBeaconMaximumInterval = smartBeaconMaximumInterval
         self.locationShareInterval = locationShareInterval
         self.bssUserID = bssUserID
         self.pttReleaseIDInfo = pttReleaseIDInfo
@@ -94,8 +109,12 @@ public struct BeaconSettings: Codable, Equatable {
             pttReleaseIDInfo: "",
             beaconMessage: "",
             aprsSymbol: "",
-            aprsCallsign: ""
+            aprsCallsign: "",
+            smartBeaconEnabled: false,
+            micEEnabled: false,
+            sendIDByAPRS: false,
+            smartBeaconMinimumInterval: nil,
+            smartBeaconMaximumInterval: nil
         )
     }
 }
-

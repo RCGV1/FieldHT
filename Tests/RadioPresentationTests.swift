@@ -18,9 +18,24 @@ enum RadioPresentationTests {
         expectEqual(RadioPresentation.sMeterLabel(forPercent: -1), "S0", "signal clamps below zero")
         expectEqual(RadioPresentation.sMeterLabel(forPercent: 200), "S9+", "signal clamps above 100")
         expectEqual(
-            RadioPresentation.screenTimeoutOptions.contains { $0.value > 31 },
-            false,
-            "screen timeout options must fit the current five-bit field"
+            RadioPresentation.channelMenuLabel(channelID: 0, name: "  Local Repeater  "),
+            "1. Local Repeater",
+            "channel menu labels include the channel number and trimmed name"
+        )
+        expectEqual(
+            RadioPresentation.channelMenuLabel(channelID: 4, name: ""),
+            "5. Unnamed channel",
+            "blank channel names use a clear fallback"
+        )
+        expectEqual(
+            RadioPresentation.screenTimeoutOptions.map(\.label),
+            ["Always On", "5 seconds", "10 seconds", "15 seconds", "20 seconds", "25 seconds", "300 seconds (Max)"],
+            "screen timeout uses the radio's encoded choices through its 300-second maximum"
+        )
+        expectEqual(
+            RadioPresentation.txHoldOptions.map(\.label),
+            ["Off", "0.1 seconds", "0.2 seconds", "0.3 seconds", "0.4 seconds", "0.5 seconds", "0.6 seconds", "0.7 seconds", "0.8 seconds", "0.9 seconds", "1.0 seconds"],
+            "TX hold uses the radio's tenth-of-a-second steps"
         )
         expectEqual(
             RadioPresentation.txLimitOptions.allSatisfy { (0...31).contains($0.value) },

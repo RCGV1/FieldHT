@@ -120,7 +120,7 @@ struct PFSettingsView: View {
                 
 
                     // Trigger -> Action mapping
-                    Section(header: Text("Trigger Actions")) {
+                    Section {
                         ForEach(availableTriggers, id: \.self) { trigger in
                             HStack {
                                 Text(triggerDisplayName(trigger))
@@ -135,6 +135,10 @@ struct PFSettingsView: View {
                                 .disabled(viewModel.pfLockedSlots.contains(pfSlotKey(buttonID: selectedButtonID, action: lockAction(for: trigger))))
                             }
                         }
+                    } header: {
+                        Text("Trigger Actions")
+                    } footer: {
+                        Text("When the radio reports Press Down and Release slots, pair them for momentary actions such as PTT.")
                     }
                 }
                 .disabled(viewModel.isPFSaving)
@@ -167,8 +171,7 @@ struct PFSettingsView: View {
     
     // Get available triggers for the selected button
     private var availableTriggers: [PFActionType] {
-        // Keep the UI intentionally small by default.
-        let triggers: [PFActionType] = [.shortSingle, .double, .long]
+        let triggers: [PFActionType] = [.shortSingle, .double, .long, .lowToHigh, .highToLow]
 
         // Only show triggers the device actually exposed for this button.
         guard let pfConfig = viewModel.pfConfig else { return triggers }
@@ -209,7 +212,7 @@ struct PFSettingsView: View {
 
                     // Prefer the explicit short-press slot when it exists.
                     // Only fall back to variants on radios that don't expose `.shortSingle`.
-                    // Do NOT fall back to edge-trigger slots (eg `.lowToHigh`).
+                    // Do NOT fall back to press/release slots when editing short press.
                     let candidates: [PFActionType] = [.shortSingle, .short, .invalid]
                     for candidate in candidates {
                         if let entry = forButton.first(where: { $0.action == candidate }) {
@@ -264,8 +267,8 @@ struct PFSettingsView: View {
         case .veryLong: return "Very Long Press"
         case .double: return "Double Press"
         case .`repeat`: return "Repeat"
-        case .lowToHigh: return "Press Down"
-        case .highToLow: return "High to Low"
+        case .lowToHigh: return "Press Down (Physical Press)"
+        case .highToLow: return "Release (Physical Release)"
         case .shortSingle: return "Short Press"
         case .longRelease: return "Long Release"
         case .veryLongRelease: return "Very Long Release"

@@ -19,6 +19,7 @@ public struct DeviceInfo: Codable, Equatable {
     public let supportsDMR: Bool
     public let channelCount: Int
     public let frequencyRangeCount: Int
+    public let supportsSmartBeacon: Bool
     
     public init(
         vendorID: Int,
@@ -37,7 +38,8 @@ public struct DeviceInfo: Codable, Equatable {
         supportsVFO: Bool,
         supportsDMR: Bool,
         channelCount: Int,
-        frequencyRangeCount: Int
+        frequencyRangeCount: Int,
+        supportsSmartBeacon: Bool
     ) {
         self.vendorID = vendorID
         self.productID = productID
@@ -56,6 +58,7 @@ public struct DeviceInfo: Codable, Equatable {
         self.supportsDMR = supportsDMR
         self.channelCount = channelCount
         self.frequencyRangeCount = frequencyRangeCount
+        self.supportsSmartBeacon = supportsSmartBeacon
     }
     public static func empty() -> DeviceInfo {
         return DeviceInfo(
@@ -75,8 +78,8 @@ public struct DeviceInfo: Codable, Equatable {
             supportsVFO: false,
             supportsDMR: false,
             channelCount: 0,
-            frequencyRangeCount: 0
+            frequencyRangeCount: 0,
+            supportsSmartBeacon: false
         )
     }
 }
-

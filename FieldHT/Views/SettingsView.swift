@@ -26,10 +26,17 @@ struct SettingsView: View {
                         Section {
                             if let radioController = radioManager.radioController {
                                 NavigationLink {
+                                    ConnectionManagementView()
+                                        .environmentObject(radioManager)
+                                } label: {
+                                    Label("Connection Management", systemImage: "antenna.radiowaves.left.and.right")
+                                }
+
+                                NavigationLink {
                                     ChannelListView(radioController: radioController)
                                         .environmentObject(radioManager)
                                 } label: {
-                                    Label("Channels & Memory Groups", systemImage: "list.number")
+                                    Label("Channels & Groups", systemImage: "list.number")
                                 }
 
                                 NavigationLink {
@@ -42,7 +49,7 @@ struct SettingsView: View {
                                     BeaconSettingsView()
                                         .environmentObject(radioManager)
                                 } label: {
-                                    Label("APRS / Packet Beaconing", systemImage: "location.fill")
+                                    Label("APRS Settings", systemImage: "location.fill")
                                 }
 
                                 NavigationLink {
@@ -61,11 +68,13 @@ struct SettingsView: View {
                                     }
                                 }
                             } else {
-                                Label("Channels & Memory Groups", systemImage: "list.number")
+                                Label("Connection Management", systemImage: "antenna.radiowaves.left.and.right")
+                                    .foregroundColor(.secondary)
+                                Label("Channels & Groups", systemImage: "list.number")
                                     .foregroundColor(.secondary)
                                 Label("Programmable Buttons", systemImage: "button.programmable")
                                     .foregroundColor(.secondary)
-                                Label("APRS / Packet Beaconing", systemImage: "location.fill")
+                                Label("APRS Settings", systemImage: "location.fill")
                                     .foregroundColor(.secondary)
                                 Label("Scan", systemImage: "dot.radiowaves.left.and.right")
                                     .foregroundColor(.secondary)
@@ -73,7 +82,7 @@ struct SettingsView: View {
                                     .foregroundColor(.secondary)
                             }
                         } header: {
-                            Label("Configuration", systemImage: "gearshape.2")
+                            Label("Radio Setup", systemImage: "gearshape.2")
                         }
 
                         Section {

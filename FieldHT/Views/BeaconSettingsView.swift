@@ -28,10 +28,16 @@ struct BeaconSettingsView: View {
     @State private var pttReleaseSendBSSUserID: Bool = false
     @State private var sendPwrVoltage: Bool = false
     @State private var allowPositionCheck: Bool = false
+    @State private var micEEnabled: Bool = false
+    @State private var sendIDByAPRS: Bool = false
     
     @State private var locationShareInterval: Int = 0
     @State private var timeToLive: Int = 0
     @State private var maxFwdTimes: Int = 0
+    @State private var smartBeaconEnabled: Bool = false
+    @State private var smartBeaconMinimumInterval: Int = 0
+    @State private var smartBeaconMaximumInterval: Int = 0
+    @State private var supportsSmartBeaconIntervals = false
     
     var body: some View {
         Form {
@@ -85,6 +91,11 @@ struct BeaconSettingsView: View {
                     APRSSymbolRow(selectedCode: aprsSymbol) { sym in
                         aprsSymbol = sym.code
                     }
+
+                    if packetFormat == .aprs {
+                        Toggle("Enable Mic-E", isOn: $micEEnabled)
+                        Toggle("Send ID by APRS", isOn: $sendIDByAPRS)
+                    }
                 }
                 
                 Section(header: Text("Location Sharing"), footer: Text("The radio stores the sharing interval in 10-second steps.")) {
@@ -96,6 +107,24 @@ struct BeaconSettingsView: View {
                         TextField("Seconds", value: $locationShareInterval, format: .number)
                             .keyboardType(.numberPad)
                             .multilineTextAlignment(.trailing)
+                    }
+                }
+
+                if supportsSmartBeaconIntervals {
+                    Section(header: Text("Smart Beaconing"), footer: Text("The radio adjusts beacon timing based on movement. Minimum and maximum intervals are in minutes.")) {
+                        Toggle("Enable Smart Beacon", isOn: $smartBeaconEnabled)
+
+                        Picker("Minimum Interval", selection: $smartBeaconMinimumInterval) {
+                            ForEach(0...15, id: \.self) { value in
+                                Text(value == 0 ? "Use share interval" : "\(value) minutes").tag(value)
+                            }
+                        }
+
+                        Picker("Maximum Interval", selection: $smartBeaconMaximumInterval) {
+                            ForEach(0...30, id: \.self) { value in
+                                Text(value == 0 ? "Use radio default" : "\(value) minutes").tag(value)
+                            }
+                        }
                     }
                 }
                 
@@ -187,9 +216,20 @@ struct BeaconSettingsView: View {
                 self.pttReleaseSendBSSUserID = currentSettings.pttReleaseSendBSSUserID
                 self.sendPwrVoltage = currentSettings.sendPwrVoltage
                 self.allowPositionCheck = currentSettings.allowPositionCheck
+                self.micEEnabled = currentSettings.micEEnabled
+                self.sendIDByAPRS = currentSettings.sendIDByAPRS
                 self.locationShareInterval = currentSettings.locationShareInterval
                 self.timeToLive = currentSettings.timeToLive
                 self.maxFwdTimes = currentSettings.maxFwdTimes
+                self.smartBeaconEnabled = currentSettings.smartBeaconEnabled
+                if let minimum = currentSettings.smartBeaconMinimumInterval,
+                   let maximum = currentSettings.smartBeaconMaximumInterval {
+                    self.smartBeaconMinimumInterval = minimum
+                    self.smartBeaconMaximumInterval = maximum
+                    self.supportsSmartBeaconIntervals = true
+                } else {
+                    self.supportsSmartBeaconIntervals = false
+                }
                 self.isLoading = false
             } catch {
                 print("Error loading beacon settings: \(error)")
@@ -215,10 +255,17 @@ struct BeaconSettingsView: View {
         updatedSettings.pttReleaseSendBSSUserID = pttReleaseSendBSSUserID
         updatedSettings.sendPwrVoltage = sendPwrVoltage
         updatedSettings.allowPositionCheck = allowPositionCheck
+        updatedSettings.micEEnabled = micEEnabled
+        updatedSettings.sendIDByAPRS = sendIDByAPRS
         
         updatedSettings.locationShareInterval = locationShareInterval
         updatedSettings.timeToLive = timeToLive
         updatedSettings.maxFwdTimes = maxFwdTimes
+        if supportsSmartBeaconIntervals {
+            updatedSettings.smartBeaconEnabled = smartBeaconEnabled
+            updatedSettings.smartBeaconMinimumInterval = smartBeaconMinimumInterval
+            updatedSettings.smartBeaconMaximumInterval = smartBeaconMaximumInterval
+        }
         
         Task {
             do {

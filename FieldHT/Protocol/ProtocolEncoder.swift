@@ -310,7 +310,10 @@ public struct ProtocolEncoder {
         stream.writeBool(settings.allowPositionCheck)
         stream.writeInt(0, bitCount: 1) // pad
         stream.writeInt(settings.aprsSSID, bitCount: 4)
-        stream.writeInt(0, bitCount: 4) // pad2
+        stream.writeBool(settings.smartBeaconEnabled)
+        stream.writeBool(settings.micEEnabled)
+        stream.writeBool(settings.sendIDByAPRS)
+        stream.writeInt(0, bitCount: 1) // reserved
         stream.writeInt(settings.locationShareInterval / 10, bitCount: 8)
         
         let bssUserIDLower = settings.bssUserID & 0xFFFFFFFF
@@ -356,6 +359,13 @@ public struct ProtocolEncoder {
         // Extended: upper 32 bits of bss_user_id
         let bssUserIDUpper = (settings.bssUserID >> 32) & 0xFFFFFFFF
         stream.writeInt(bssUserIDUpper, bitCount: 32)
+
+        if let smartBeaconMinimumInterval = settings.smartBeaconMinimumInterval,
+           let smartBeaconMaximumInterval = settings.smartBeaconMaximumInterval {
+            stream.writeInt(smartBeaconMinimumInterval, bitCount: 4)
+            stream.writeInt(smartBeaconMaximumInterval, bitCount: 5)
+            stream.writeInt(0, bitCount: 7) // reserved
+        }
         
         return stream.toData()
     }

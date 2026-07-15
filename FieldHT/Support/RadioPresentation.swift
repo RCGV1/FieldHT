@@ -9,17 +9,19 @@ struct RadioChoice: Identifiable, Equatable {
 
 enum RadioPresentation {
     static let screenTimeoutOptions: [RadioChoice] = [
-        RadioChoice(value: 5, label: "5 seconds"),
-        RadioChoice(value: 10, label: "10 seconds"),
-        RadioChoice(value: 15, label: "15 seconds"),
-        RadioChoice(value: 20, label: "20 seconds"),
-        RadioChoice(value: 25, label: "25 seconds"),
-        RadioChoice(value: 30, label: "30 seconds"),
-        RadioChoice(value: 31, label: "Always On")
+        RadioChoice(value: 0, label: "Always On"),
+        RadioChoice(value: 1, label: "5 seconds"),
+        RadioChoice(value: 2, label: "10 seconds"),
+        RadioChoice(value: 3, label: "15 seconds"),
+        RadioChoice(value: 4, label: "20 seconds"),
+        RadioChoice(value: 5, label: "25 seconds"),
+        RadioChoice(value: 6, label: "300 seconds (Max)")
     ]
 
-    static let txHoldOptions: [RadioChoice] = (0...15).map { value in
-        RadioChoice(value: value, label: "\(value) seconds")
+    static let txHoldOptions: [RadioChoice] = [
+        RadioChoice(value: 0, label: "Off")
+    ] + (1...10).map { value in
+        RadioChoice(value: value, label: String(format: "%.1f seconds", Double(value) / 10))
     }
 
     static let txLimitOptions: [RadioChoice] = [
@@ -34,6 +36,12 @@ enum RadioPresentation {
             return "S9+"
         }
         return "S\(min(9, max(0, clamped / 10)))"
+    }
+
+    static func channelMenuLabel(channelID: Int, name: String) -> String {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = trimmedName.isEmpty ? "Unnamed channel" : trimmedName
+        return "\(channelID + 1). \(displayName)"
     }
 
     static func speakerMicName(model: String?, isBS22: Bool) -> String {
