@@ -8,6 +8,9 @@ enum AdvancedFrequencyScanTests {
         let settingsURL = root.appending(path: "FieldHT/Views/ScanSettingsView.swift")
         let radioManagerURL = root.appending(path: "FieldHT/ViewModels/RadioManager.swift")
         let encoderURL = root.appending(path: "FieldHT/Protocol/ProtocolEncoder.swift")
+        let decoderURL = root.appending(path: "FieldHT/Protocol/ProtocolDecoder.swift")
+        let messageURL = root.appending(path: "FieldHT/Command/RadioMessage.swift")
+        let controllerURL = root.appending(path: "FieldHT/RadioController.swift")
         var failures = 0
 
         func expect(_ condition: Bool, _ message: String) {
@@ -42,6 +45,10 @@ enum AdvancedFrequencyScanTests {
             expect(scan.contains("applyPreset"), "advanced frequency scan must apply band presets consistently")
             expect(scan.contains("GlassEffectContainer"), "native scan controls must use the iOS liquid glass container when available")
             expect(scan.contains("buttonStyle(.glass)"), "native scan controls must use the iOS glass button style when available")
+            expect(scan.contains("rxSubAudio"), "scan hits must retain the radio-reported receive tone")
+            expect(scan.contains("onDelete"), "recent scan hits must support swipe deletion")
+            expect(scan.contains("ScanHitSaveSheet"), "scan hits must open a memory-slot save sheet")
+            expect(scan.contains("if case .held = operation"), "fine tuning must only appear while the scan is held")
         }
 
         let settings = try String(contentsOf: settingsURL, encoding: .utf8)
@@ -53,6 +60,16 @@ enum AdvancedFrequencyScanTests {
         let encoder = try String(contentsOf: encoderURL, encoding: .utf8)
         expect(encoder.contains("stream.writeInt(mode.rawValue, bitCount: 4)"), "frequency mode payload must encode the requested mode")
         expect(!encoder.contains("reserved1: UInt16 = 0x0A00"), "frequency mode payload must not hard-code satellite mode")
+        expect(encoder.contains("encodeWriteRegionChannel"), "protocol encoder must write a full memory group channel")
+
+        let decoder = try String(contentsOf: decoderURL, encoding: .utf8)
+        expect(decoder.contains("let rxSubAudio = decodeSubAudio"), "frequency status must decode the detected receive tone")
+
+        let message = try String(contentsOf: messageURL, encoding: .utf8)
+        expect(message.contains("public let rxSubAudio: SubAudio?"), "frequency status must expose the detected receive tone")
+
+        let controller = try String(contentsOf: controllerURL, encoding: .utf8)
+        expect(controller.contains("saveScanHit"), "radio controller must save scan results to the selected memory group slot")
 
         if failures > 0 {
             exit(1)

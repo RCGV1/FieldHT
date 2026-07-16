@@ -7,6 +7,7 @@ final class AdvancedFrequencyScanStore: ObservableObject {
     struct ScanHit: Codable, Identifiable, Equatable {
         let id: UUID
         let frequencyMHz: Double
+        let rxSubAudio: SubAudio?
         let detectedAt: Date
     }
 
@@ -116,10 +117,23 @@ final class AdvancedFrequencyScanStore: ObservableObject {
         persist()
     }
 
-    func recordHit(frequencyMHz: Double) {
-        guard !hits.contains(where: { abs($0.frequencyMHz - frequencyMHz) < 0.000_001 }) else { return }
-        hits.insert(ScanHit(id: UUID(), frequencyMHz: frequencyMHz, detectedAt: .now), at: 0)
+    func recordHit(frequencyMHz: Double, rxSubAudio: SubAudio?) {
+        hits.removeAll { abs($0.frequencyMHz - frequencyMHz) < 0.000_001 }
+        hits.insert(
+            ScanHit(
+                id: UUID(),
+                frequencyMHz: frequencyMHz,
+                rxSubAudio: rxSubAudio,
+                detectedAt: .now
+            ),
+            at: 0
+        )
         hits = Array(hits.prefix(Self.maxRecentHits))
+        persist()
+    }
+
+    func deleteHits(at offsets: IndexSet) {
+        hits.remove(atOffsets: offsets)
         persist()
     }
 
@@ -171,6 +185,7 @@ struct AdvancedFrequencyScanView: View {
     @State private var scanMonitoringTask: Task<Void, Never>?
     @State private var scanError: String?
     @State private var isShowingSetup = false
+    @State private var hitToSave: AdvancedFrequencyScanStore.ScanHit?
 
     private var isScanning: Bool {
         if case .scanning = operation { return true }
@@ -185,8 +200,10 @@ struct AdvancedFrequencyScanView: View {
                 scanControls
             }
 
-            Section("Fine Tune") {
-                fineTuneControls
+            if case .held = operation {
+                Section("Fine Tune") {
+                    fineTuneControls
+                }
             }
 
             recentHits
@@ -213,6 +230,10 @@ struct AdvancedFrequencyScanView: View {
         }
         .sheet(isPresented: $isShowingSetup) {
             AdvancedScanSetupView(store: scanStore)
+        }
+        .sheet(item: $hitToSave) { hit in
+            ScanHitSaveSheet(hit: hit)
+                .environmentObject(radioManager)
         }
         .onDisappear(perform: stopScan)
     }
@@ -327,6 +348,7 @@ struct AdvancedFrequencyScanView: View {
                 ForEach(scanStore.hits) { hit in
                     hitRow(hit)
                 }
+                .onDelete(perform: scanStore.deleteHits)
             }
         } header: {
             HStack {
@@ -343,37 +365,41 @@ struct AdvancedFrequencyScanView: View {
     }
 
     private func hitRow(_ hit: AdvancedFrequencyScanStore.ScanHit) -> some View {
-        Button {
-            tuneExactly(hit.frequencyMHz)
-        } label: {
-            HStack {
-                Image(systemName: "dot.radiowaves.left.and.right")
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(String(format: "%.4f MHz", hit.frequencyMHz))
-                        .font(.body.monospacedDigit())
-                    Text(hit.detectedAt, style: .time)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
+        HStack {
             Button {
-                save(hit, to: .a)
+                tuneExactly(hit.frequencyMHz)
             } label: {
-                Label("Save to VFO A", systemImage: "a.circle")
+                HStack {
+                    Image(systemName: "dot.radiowaves.left.and.right")
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(String(format: "%.4f MHz", hit.frequencyMHz))
+                            .font(.body.monospacedDigit())
+                        if let rxSubAudio = hit.rxSubAudio {
+                            Text(rxSubAudio.scanToneLabel)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text(hit.detectedAt, style: .time)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                }
             }
+            .buttonStyle(.plain)
 
             Button {
-                save(hit, to: .b)
+                hitToSave = hit
             } label: {
-                Label("Save to VFO B", systemImage: "b.circle")
+                Image(systemName: "tray.and.arrow.down")
             }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Save hit to memory")
         }
-        .accessibilityHint("Tunes this frequency exactly. Long press to save it to a VFO.")
+        .accessibilityElement(children: .contain)
+        .accessibilityHint("Swipe to delete this hit.")
     }
 
     @ViewBuilder
@@ -504,16 +530,6 @@ struct AdvancedFrequencyScanView: View {
         applyFrequencyMode(.exact)
     }
 
-    private func save(_ hit: AdvancedFrequencyScanStore.ScanHit, to channel: ChannelType) {
-        Task { @MainActor in
-            do {
-                try await radioManager.tuneVFO(hit.frequencyMHz, for: channel)
-            } catch {
-                scanError = "Unable to save hit to VFO: \(error.localizedDescription)"
-            }
-        }
-    }
-
     private func applyFrequencyMode(_ mode: FrequencyMode) {
         scanError = nil
         Task { @MainActor in
@@ -546,6 +562,13 @@ struct AdvancedFrequencyScanView: View {
 
             scanStore.setCurrentMHz(status.rxMHz)
 
+            if status.isTuned {
+                scanStore.recordHit(
+                    frequencyMHz: status.rxMHz,
+                    rxSubAudio: status.rxSubAudio
+                )
+            }
+
             guard status.mode == mode else {
                 operation = status.isTuned ? .held(direction: direction) : .idle
                 scanMonitoringTask = nil
@@ -554,7 +577,6 @@ struct AdvancedFrequencyScanView: View {
 
             guard status.isTuned else { continue }
 
-            scanStore.recordHit(frequencyMHz: status.rxMHz)
             if scanStore.autoContinue {
                 scanStore.move(direction: direction, usingFineTuning: false)
                 try await sendFrequencyMode(mode)
@@ -659,5 +681,187 @@ private struct AdvancedScanSetupView: View {
 
     private func stepLabel(_ value: Double) -> String {
         value.rounded() == value ? "\(Int(value)) kHz" : "\(value) kHz"
+    }
+}
+
+private struct ScanHitSaveSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var radioManager: RadioManager
+
+    let hit: AdvancedFrequencyScanStore.ScanHit
+
+    @State private var groupIndex = 0
+    @State private var slot = 0
+    @State private var existingChannel: Channel?
+    @State private var isWorking = false
+    @State private var errorMessage: String?
+    @State private var isShowingOverwriteConfirmation = false
+
+    private var maximumSlot: Int {
+        max(radioManager.memoryChannelCount - 1, 0)
+    }
+
+    private var hasMemoryGroups: Bool {
+        !radioManager.regionNames.isEmpty && radioManager.memoryChannelCount > 0
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Detected") {
+                    LabeledContent("Frequency") {
+                        Text(String(format: "%.4f MHz", hit.frequencyMHz))
+                            .monospacedDigit()
+                    }
+                    if let rxSubAudio = hit.rxSubAudio {
+                        LabeledContent("Receive Tone", value: rxSubAudio.scanToneLabel)
+                    }
+                }
+
+                Section("Save To") {
+                    Picker("Memory Group", selection: $groupIndex) {
+                        ForEach(Array(radioManager.regionNames.enumerated()), id: \.offset) { index, name in
+                            Text(name).tag(index)
+                        }
+                    }
+
+                    Stepper(value: $slot, in: 0...maximumSlot) {
+                        LabeledContent("Channel") {
+                            Text(String(format: "%03d", slot + 1))
+                                .monospacedDigit()
+                        }
+                    }
+                }
+
+                if let existingChannel, !existingChannel.isEmptyMemorySlot {
+                    Section {
+                        LabeledContent("Existing Frequency") {
+                            Text(String(format: "%.4f MHz", existingChannel.rxFreq))
+                                .monospacedDigit()
+                        }
+                        if !existingChannel.name.isEmpty {
+                            LabeledContent("Existing Name", value: existingChannel.name)
+                        }
+                    } header: {
+                        Text("Existing Channel")
+                    } footer: {
+                        Text("Saving will replace this channel after confirmation.")
+                    }
+                }
+
+                if let errorMessage {
+                    Section {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle("Save Scan Hit")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        checkTargetSlot()
+                    } label: {
+                        if isWorking {
+                            ProgressView()
+                        } else {
+                            Text("Save")
+                        }
+                    }
+                    .disabled(!hasMemoryGroups || isWorking || !radioManager.isConnected)
+                }
+            }
+            .onAppear {
+                groupIndex = min(radioManager.activeRegionIndex, max(radioManager.regionNames.count - 1, 0))
+            }
+            .onChange(of: groupIndex) {
+                existingChannel = nil
+            }
+            .onChange(of: slot) {
+                existingChannel = nil
+            }
+            .confirmationDialog(
+                "Replace Existing Channel?",
+                isPresented: $isShowingOverwriteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Replace", role: .destructive) {
+                    saveHit()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Channel \(slot + 1) in \(radioManager.regionNames[safe: groupIndex] ?? "this group") will be replaced.")
+            }
+        }
+    }
+
+    private func checkTargetSlot() {
+        errorMessage = nil
+        isWorking = true
+
+        Task {
+            do {
+                let channel = try await radioManager.memoryChannel(inRegion: groupIndex, slot: slot)
+                existingChannel = channel
+                isWorking = false
+
+                if channel.isEmptyMemorySlot {
+                    saveHit()
+                } else {
+                    isShowingOverwriteConfirmation = true
+                }
+            } catch {
+                isWorking = false
+                errorMessage = "Unable to inspect this channel: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func saveHit() {
+        errorMessage = nil
+        isWorking = true
+
+        Task {
+            do {
+                try await radioManager.saveScanHit(
+                    frequencyMHz: hit.frequencyMHz,
+                    rxSubAudio: hit.rxSubAudio,
+                    inRegion: groupIndex,
+                    slot: slot
+                )
+                dismiss()
+            } catch {
+                isWorking = false
+                errorMessage = "Unable to save this channel: \(error.localizedDescription)"
+            }
+        }
+    }
+}
+
+private extension Channel {
+    var isEmptyMemorySlot: Bool {
+        rxFreq <= 0 && txFreq <= 0 && name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+private extension SubAudio {
+    var scanToneLabel: String {
+        switch self {
+        case .frequency(let hertz):
+            return String(format: "PL %.1f Hz", hertz)
+        case .dcs(let dcs):
+            return String(format: "DCS %03d", dcs.n)
+        }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

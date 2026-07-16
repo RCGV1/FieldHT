@@ -457,6 +457,14 @@ public struct ProtocolEncoder {
         return stream.toData()
     }
 
+    /// The stock programmer writes one complete channel payload after the
+    /// region and zero-based memory-slot bytes.
+    public static func encodeWriteRegionChannel(regionID: Int, slot: Int, channel: Channel) -> Data {
+        var body = Data([UInt8(clamping: regionID), UInt8(clamping: slot)])
+        body.append(encodeChannel(channel).dropFirst())
+        return body
+    }
+
     // MARK: - Event Registration Encoding
     
     public static func encodeRegisterNotification(_ eventType: EventType) -> Data {

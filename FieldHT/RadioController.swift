@@ -783,6 +783,70 @@ public class RadioController: ObservableObject {
         try await connection.setRegionChannel(regionID: regionID, channelID: channelID)
     }
 
+    /// Read a single memory slot without leaving the radio in another group.
+    public func memoryChannel(inRegion regionID: Int, slot: Int) async throws -> Channel {
+        guard let currentState = state,
+              (0..<currentState.deviceInfo.regionCount).contains(regionID),
+              (0..<currentState.deviceInfo.channelCount).contains(slot) else {
+            throw RadioError.invalidChannelID
+        }
+
+        let previousRegion = currentState.status.currRegion
+        let needsRestore = previousRegion != regionID
+
+        do {
+            if needsRestore {
+                try await connection.setRegion(regionID)
+                guard await pollStatusUntilRegionMatches(regionID)?.currRegion == regionID else {
+                    throw RadioError.connectionFailed
+                }
+            }
+
+            let channel = try await connection.getChannel(slot)
+
+            if needsRestore {
+                try await connection.setRegion(previousRegion)
+                _ = await pollStatusUntilRegionMatches(previousRegion)
+            }
+
+            return channel
+        } catch {
+            if needsRestore {
+                try? await connection.setRegion(previousRegion)
+            }
+            throw error
+        }
+    }
+
+    /// Save a detected receive frequency as a receive-only memory channel.
+    public func saveScanHit(
+        frequencyMHz: Double,
+        rxSubAudio: SubAudio?,
+        inRegion regionID: Int,
+        slot: Int
+    ) async throws {
+        guard let currentState = state,
+              (0..<currentState.deviceInfo.regionCount).contains(regionID),
+              (0..<currentState.deviceInfo.channelCount).contains(slot) else {
+            throw RadioError.invalidChannelID
+        }
+
+        var channel = Channel.empty(channelID: slot)
+        channel.rxFreq = frequencyMHz
+        channel.txFreq = frequencyMHz
+        channel.rxSubAudio = rxSubAudio
+        channel.txDisable = true
+        channel.scan = true
+        channel.name = String(format: "SCAN %.1f", frequencyMHz)
+
+        try await connection.setRegionChannel(regionID: regionID, slot: slot, channel: channel)
+
+        var regionChannels = channels[regionID] ?? [:]
+        regionChannels[slot] = channel
+        channels[regionID] = regionChannels
+        objectWillChange.send()
+    }
+
     /// Add event handler
     @discardableResult
     public func addEventHandler(_ handler: @escaping EventHandler) -> () -> Void {

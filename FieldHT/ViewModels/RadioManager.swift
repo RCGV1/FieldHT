@@ -52,6 +52,7 @@ public class RadioManager: ObservableObject {
     
     var channels: [Channel] { radioController?.channelsForCurrentRegion ?? [] }
     var regionNames: [String] { radioController?.regionNames ?? [] }
+    var memoryChannelCount: Int { radioController?.deviceInfo.channelCount ?? 0 }
     var currentStatus: Status? { radioController?.state?.status }
     private var hasValidRadioReportedSpeakerMicBattery: Bool { (1...100).contains(hmBatteryLevel) }
     var supportsSpeakerMicAccessory: Bool {
@@ -1168,6 +1169,30 @@ public class RadioManager: ObservableObject {
     public func getFrequencyScanStatus() async throws -> FrequencyModeStatus {
         guard let controller = radioController else { throw BLEError.notConnected }
         return try await controller.getFrequencyScanStatus()
+    }
+
+    public func memoryChannel(inRegion regionID: Int, slot: Int) async throws -> Channel {
+        guard let controller = radioController else { throw BLEError.notConnected }
+        isBusy = true
+        defer { isBusy = false }
+        return try await controller.memoryChannel(inRegion: regionID, slot: slot)
+    }
+
+    public func saveScanHit(
+        frequencyMHz: Double,
+        rxSubAudio: SubAudio?,
+        inRegion regionID: Int,
+        slot: Int
+    ) async throws {
+        guard let controller = radioController else { throw BLEError.notConnected }
+        isBusy = true
+        defer { isBusy = false }
+        try await controller.saveScanHit(
+            frequencyMHz: frequencyMHz,
+            rxSubAudio: rxSubAudio,
+            inRegion: regionID,
+            slot: slot
+        )
     }
 
     public func setSplitFrequency(rxMHz: Double, txMHz: Double, for channel: ChannelType) {

@@ -39,6 +39,8 @@ public enum FrequencyScanStep: Int, CaseIterable, Sendable {
 public struct FrequencyModeStatus: Sendable, Equatable {
     public let rxMHz: Double
     public let txMHz: Double
+    public let rxSubAudio: SubAudio?
+    public let txSubAudio: SubAudio?
     public let step: FrequencyScanStep
     public let mode: FrequencyMode?
     public let isTuned: Bool

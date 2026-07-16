@@ -308,6 +308,14 @@ capability is present; otherwise the app sends one command per notification
   strong evidence that these are the app's two VFO slots.
 - Channel writes are queued per channel and followed by `STORE_SETTINGS`
   (`/tmp/btech-jadx/sources/v4/c0.java:2355-2428`).
+- A group-memory write is distinct from a VFO or RF-channel write. The stock
+  app sends `WRITE_REGION_CH` with an 8-bit region index, an 8-bit zero-based
+  slot index, and the complete packed channel payload
+  (`/tmp/btech-jadx/sources/v4/c0.java:559-600`). The payload is the normal
+  channel structure without its leading channel-ID byte
+  (`/tmp/btech-jadx/sources/v4/r.java:459-518`). This is the appropriate
+  command shape for saving a scan result to a user-selected memory group and
+  channel number.
 
 ### Speaker mic and audio
 
@@ -395,4 +403,3 @@ in FieldHT.
    UV-PRO for mode 35, command 36, start/stop, wrap, tune, auto-continue,
    notification registration, and reconnect. Convert each confirmed packet into
    a fixture-backed FieldHT protocol test.
-

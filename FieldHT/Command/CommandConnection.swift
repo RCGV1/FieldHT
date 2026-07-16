@@ -1265,6 +1265,22 @@ public class CommandConnection: BLEConnectionDelegate {
             throw ProtocolError.invalidReply
         }
     }
+
+    public func setRegionChannel(regionID: Int, slot: Int, channel: Channel) async throws {
+        let body = ProtocolEncoder.encodeWriteRegionChannel(regionID: regionID, slot: slot, channel: channel)
+        let reply = try await sendCommandAndWaitForReply(
+            commandGroup: .basic,
+            command: BasicCommand.writeRegionCh.rawValue,
+            body: body
+        )
+
+        guard case .reply(.success) = reply else {
+            if case .reply(.error(let status, let message)) = reply {
+                throw ProtocolError.commandFailed(status, message)
+            }
+            throw ProtocolError.invalidReply
+        }
+    }
 }
 
 /// Protocol errors
