@@ -1,8 +1,24 @@
 import Combine
+import Foundation
 import SwiftUI
 
 @MainActor
 final class AdvancedFrequencyScanStore: ObservableObject {
+    struct ScanHit: Codable, Identifiable, Equatable {
+        let id: UUID
+        let frequencyMHz: Double
+        let detectedAt: Date
+    }
+
+    struct BandPreset: Identifiable {
+        let name: String
+        let startMHz: Double
+        let endMHz: Double
+        let defaultStepKHz: Double
+
+        var id: String { name }
+    }
+
     private struct StoredValues: Codable {
         var startMHz: Double
         var endMHz: Double
@@ -11,10 +27,19 @@ final class AdvancedFrequencyScanStore: ObservableObject {
         var fineTuningStepKHz: Double
         var autoContinue: Bool?
         var pauseOnSignal: Bool?
+        var hits: [ScanHit]?
     }
 
     static let scanStepOptions: [Double] = [5, 6.25, 10, 12.5, 15, 25]
     static let fineTuningStepOptions: [Double] = [0.5, 5, 6.25, 10, 12.5, 15, 25]
+    static let maxRecentHits = 24
+    static let bandPresets: [BandPreset] = [
+        BandPreset(name: "2 m", startMHz: 144, endMHz: 148, defaultStepKHz: 12.5),
+        BandPreset(name: "1.25 m", startMHz: 220, endMHz: 225, defaultStepKHz: 12.5),
+        BandPreset(name: "70 cm", startMHz: 420, endMHz: 450, defaultStepKHz: 25),
+        BandPreset(name: "NOAA Weather", startMHz: 162.400, endMHz: 162.550, defaultStepKHz: 25),
+        BandPreset(name: "Wide VHF/UHF", startMHz: 136, endMHz: 520, defaultStepKHz: 25)
+    ]
 
     private static let defaultsKey = "advancedFrequencyScan"
 
@@ -24,6 +49,7 @@ final class AdvancedFrequencyScanStore: ObservableObject {
     @Published var scanStepKHz: Double { didSet { persist() } }
     @Published var fineTuningStepKHz: Double { didSet { persist() } }
     @Published var autoContinue: Bool { didSet { persist() } }
+    @Published private(set) var hits: [ScanHit]
 
     init() {
         if let data = UserDefaults.standard.data(forKey: Self.defaultsKey),
@@ -35,14 +61,16 @@ final class AdvancedFrequencyScanStore: ObservableObject {
             currentMHz = min(max(saved.currentMHz, saved.startMHz), saved.endMHz)
             scanStepKHz = Self.scanStepOptions.contains(saved.scanStepKHz) ? saved.scanStepKHz : 12.5
             fineTuningStepKHz = Self.fineTuningStepOptions.contains(saved.fineTuningStepKHz) ? saved.fineTuningStepKHz : 0.5
-            autoContinue = saved.autoContinue ?? saved.pauseOnSignal ?? true
+            autoContinue = saved.autoContinue ?? saved.pauseOnSignal ?? false
+            hits = Array((saved.hits ?? []).prefix(Self.maxRecentHits))
         } else {
             startMHz = 136
             endMHz = 520
             currentMHz = 146.520
             scanStepKHz = 12.5
             fineTuningStepKHz = 0.5
-            autoContinue = true
+            autoContinue = false
+            hits = []
         }
     }
 
@@ -80,6 +108,26 @@ final class AdvancedFrequencyScanStore: ObservableObject {
         persist()
     }
 
+    func applyPreset(_ preset: BandPreset) {
+        startMHz = preset.startMHz
+        endMHz = preset.endMHz
+        currentMHz = preset.startMHz
+        scanStepKHz = preset.defaultStepKHz
+        persist()
+    }
+
+    func recordHit(frequencyMHz: Double) {
+        guard !hits.contains(where: { abs($0.frequencyMHz - frequencyMHz) < 0.000_001 }) else { return }
+        hits.insert(ScanHit(id: UUID(), frequencyMHz: frequencyMHz, detectedAt: .now), at: 0)
+        hits = Array(hits.prefix(Self.maxRecentHits))
+        persist()
+    }
+
+    func clearHits() {
+        hits = []
+        persist()
+    }
+
     private func persist() {
         let values = StoredValues(
             startMHz: startMHz,
@@ -88,230 +136,433 @@ final class AdvancedFrequencyScanStore: ObservableObject {
             scanStepKHz: scanStepKHz,
             fineTuningStepKHz: fineTuningStepKHz,
             autoContinue: autoContinue,
-            pauseOnSignal: nil
+            pauseOnSignal: nil,
+            hits: hits
         )
         guard let data = try? JSONEncoder().encode(values) else { return }
         UserDefaults.standard.set(data, forKey: Self.defaultsKey)
+    }
+}
+private enum ScanOperationState: Equatable {
+    case idle
+    case scanning(direction: Int)
+    case held(direction: Int)
+
+    var direction: Int {
+        switch self {
+        case .idle: 1
+        case .scanning(let direction), .held(let direction): direction
+        }
+    }
+
+    var statusText: String {
+        switch self {
+        case .idle: "Ready"
+        case .scanning(let direction): direction > 0 ? "Scanning up" : "Scanning down"
+        case .held: "Held on signal"
+        }
     }
 }
 
 struct AdvancedFrequencyScanView: View {
     @EnvironmentObject private var radioManager: RadioManager
     @StateObject private var scanStore = AdvancedFrequencyScanStore()
-    @State private var isRapidScanning = false
+    @State private var operation: ScanOperationState = .idle
     @State private var scanMonitoringTask: Task<Void, Never>?
     @State private var scanError: String?
+    @State private var isShowingSetup = false
+
+    private var isScanning: Bool {
+        if case .scanning = operation { return true }
+        return false
+    }
 
     var body: some View {
-        Form {
-            Section {
-                TextField(
-                    "Start",
-                    value: Binding(
-                        get: { scanStore.startMHz },
-                        set: { scanStore.setStartMHz($0) }
-                    ),
-                    format: .number.precision(.fractionLength(3))
-                )
-                .keyboardType(.decimalPad)
+        List {
+            liveFrequency
 
-                TextField(
-                    "End",
-                    value: Binding(
-                        get: { scanStore.endMHz },
-                        set: { scanStore.setEndMHz($0) }
-                    ),
-                    format: .number.precision(.fractionLength(3))
-                )
-                .keyboardType(.decimalPad)
-            } header: {
-                Text("Frequency Range")
-            } footer: {
-                Text("MHz. The scan wraps at the selected range limits.")
+            Section("Scan") {
+                scanControls
             }
 
-            Section {
-                Text(String(format: "%.4f MHz", scanStore.currentMHz))
-                    .font(.title2.monospacedDigit())
-                    .frame(maxWidth: .infinity, alignment: .center)
-
-                HStack {
-                    frequencyButton(systemImage: "backward.end.fill", label: "Fine tune down") {
-                        move(direction: -1, usingFineTuning: true)
-                    }
-                    Spacer()
-                    frequencyButton(systemImage: "forward.end.fill", label: "Fine tune up") {
-                        move(direction: 1, usingFineTuning: true)
-                    }
-                }
-            } header: {
-                Text("Current Frequency")
-            } footer: {
-                Text("Fine tune: \(stepLabel(scanStore.fineTuningStepKHz))")
+            Section("Fine Tune") {
+                fineTuneControls
             }
 
-            Section {
-                Picker("Step", selection: $scanStore.scanStepKHz) {
-                    ForEach(AdvancedFrequencyScanStore.scanStepOptions, id: \.self) { step in
-                        Text(stepLabel(step)).tag(step)
-                    }
-                }
-
-                Picker("Fine-Tuning", selection: $scanStore.fineTuningStepKHz) {
-                    ForEach(AdvancedFrequencyScanStore.fineTuningStepOptions, id: \.self) { step in
-                        Text(stepLabel(step)).tag(step)
-                    }
-                }
-
-                HStack {
-                    frequencyButton(systemImage: "backward.fill", label: "Scan down") {
-                        move(direction: -1, usingFineTuning: false)
-                    }
-                    Spacer()
-                    frequencyButton(systemImage: "forward.fill", label: "Scan up") {
-                        move(direction: 1, usingFineTuning: false)
-                    }
-                }
-
-                Toggle("Continue after a signal", isOn: $scanStore.autoContinue)
-
-                HStack {
-                    Button {
-                        startRapidScan(direction: -1)
-                    } label: {
-                        Label("Scan Down", systemImage: "play.fill")
-                    }
-                    .disabled(!canStartRapidScan)
-
-                    Spacer()
-
-                    if isRapidScanning {
-                        Button(role: .destructive) {
-                            stopRapidScan()
-                        } label: {
-                            Label("Stop", systemImage: "stop.fill")
-                        }
-                    } else {
-                        Button {
-                            startRapidScan(direction: 1)
-                        } label: {
-                            Label("Scan Up", systemImage: "play.fill")
-                        }
-                        .disabled(!canStartRapidScan)
-                    }
-                }
-            } header: {
-                Text("Rapid Scan")
-            } footer: {
-                Text("Uses the radio's native scan engine. The app enforces the selected range and can continue after a received signal.")
-            }
+            recentHits
 
             if let scanError {
                 Section {
-                    Text(scanError)
+                    Label(scanError, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
                 }
             }
         }
+        .listStyle(.insetGrouped)
         .navigationTitle("Advanced Scan")
-        .onDisappear(perform: stopRapidScan)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    isShowingSetup = true
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                }
+                .accessibilityLabel("Scan setup")
+                .disabled(isScanning)
+            }
+        }
+        .sheet(isPresented: $isShowingSetup) {
+            AdvancedScanSetupView(store: scanStore)
+        }
+        .onDisappear(perform: stopScan)
     }
 
-    private func frequencyButton(systemImage: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private var liveFrequency: some View {
+        Section {
+            VStack(spacing: 12) {
+                Label(operation.statusText, systemImage: statusSymbol)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(statusColor)
+
+                Text(String(format: "%.4f MHz", scanStore.currentMHz))
+                    .font(.system(size: 34, weight: .semibold, design: .monospaced))
+                    .minimumScaleFactor(0.7)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity)
+
+                LabeledContent("Range") {
+                    Text(String(format: "%.3f - %.3f MHz", scanStore.startMHz, scanStore.endMHz))
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+
+                LabeledContent("Scan Step") {
+                    Text(stepLabel(scanStore.scanStepKHz))
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 8)
+        }
+    }
+
+    @ViewBuilder
+    private var scanControls: some View {
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer(spacing: 12) {
+                scanControlButtons
+            }
+        } else {
+            scanControlButtons
+        }
+    }
+
+    private var scanControlButtons: some View {
+        HStack(spacing: 12) {
+            scanActionButton(
+                title: "Down",
+                systemImage: "backward.fill",
+                action: { startRapidScan(direction: -1) }
+            )
+
+            switch operation {
+            case .scanning:
+                scanActionButton(
+                    title: "Hold",
+                    systemImage: "pause.fill",
+                    action: holdScan
+                )
+            case .held:
+                scanActionButton(
+                    title: "Resume",
+                    systemImage: "play.fill",
+                    action: resumeScan
+                )
+            case .idle:
+                scanActionButton(
+                    title: "Hold",
+                    systemImage: "pause.fill",
+                    action: {},
+                    isEnabled: false
+                )
+            }
+
+            scanActionButton(
+                title: "Up",
+                systemImage: "forward.fill",
+                action: { startRapidScan(direction: 1) }
+            )
+        }
+    }
+
+    private var fineTuneControls: some View {
+        HStack {
+            fineTuneButton(title: "Fine tune down", systemImage: "minus", direction: -1)
+
+            VStack(spacing: 2) {
+                Text("Fine Tune")
+                    .font(.subheadline.weight(.medium))
+                Text(stepLabel(scanStore.fineTuningStepKHz))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+
+            fineTuneButton(title: "Fine tune up", systemImage: "plus", direction: 1)
+        }
+    }
+
+    @ViewBuilder
+    private var recentHits: some View {
+        Section {
+            if scanStore.hits.isEmpty {
+                ContentUnavailableView(
+                    "No hits yet",
+                    systemImage: "dot.radiowaves.left.and.right",
+                    description: Text("Detected frequencies appear here while scanning.")
+                )
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+            } else {
+                ForEach(scanStore.hits) { hit in
+                    hitRow(hit)
+                }
+            }
+        } header: {
+            HStack {
+                Text("Recent Hits")
+                Spacer()
+                if !scanStore.hits.isEmpty {
+                    Button("Clear", role: .destructive) {
+                        scanStore.clearHits()
+                    }
+                    .font(.subheadline)
+                }
+            }
+        }
+    }
+
+    private func hitRow(_ hit: AdvancedFrequencyScanStore.ScanHit) -> some View {
+        Button {
+            tuneExactly(hit.frequencyMHz)
+        } label: {
+            HStack {
+                Image(systemName: "dot.radiowaves.left.and.right")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(String(format: "%.4f MHz", hit.frequencyMHz))
+                        .font(.body.monospacedDigit())
+                    Text(hit.detectedAt, style: .time)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                save(hit, to: .a)
+            } label: {
+                Label("Save to VFO A", systemImage: "a.circle")
+            }
+
+            Button {
+                save(hit, to: .b)
+            } label: {
+                Label("Save to VFO B", systemImage: "b.circle")
+            }
+        }
+        .accessibilityHint("Tunes this frequency exactly. Long press to save it to a VFO.")
+    }
+
+    @ViewBuilder
+    private func scanActionButton(
+        title: String,
+        systemImage: String,
+        action: @escaping () -> Void,
+        isEnabled: Bool = true
+    ) -> some View {
+        if #available(iOS 26.0, *) {
+            Button(action: action) {
+                scanActionLabel(title: title, systemImage: systemImage)
+            }
+            .buttonStyle(.glass)
+            .disabled(!isEnabled || !radioManager.isConnected || radioManager.isBusy)
+        } else {
+            Button(action: action) {
+                scanActionLabel(title: title, systemImage: systemImage)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!isEnabled || !radioManager.isConnected || radioManager.isBusy)
+        }
+    }
+
+    private func scanActionLabel(title: String, systemImage: String) -> some View {
+        VStack(spacing: 5) {
             Image(systemName: systemImage)
-                .font(.title2)
-                .frame(width: 52, height: 40)
+                .font(.headline)
+            Text(title)
+                .font(.caption.weight(.medium))
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, minHeight: 48)
+    }
+
+    private func fineTuneButton(title: String, systemImage: String, direction: Int) -> some View {
+        Button {
+            fineTune(direction: direction)
+        } label: {
+            Image(systemName: systemImage)
+                .frame(width: 36, height: 36)
         }
         .buttonStyle(.bordered)
-        .disabled(!radioManager.isConnected || radioManager.isBusy || isRapidScanning)
-        .accessibilityLabel(label)
+        .disabled(!radioManager.isConnected || radioManager.isBusy)
+        .accessibilityLabel(title)
     }
 
-    private func move(direction: Int, usingFineTuning: Bool) {
-        scanStore.move(direction: direction, usingFineTuning: usingFineTuning)
+    private var statusSymbol: String {
+        switch operation {
+        case .idle: "dot.radiowaves.left.and.right"
+        case .scanning: "wave.3.right"
+        case .held: "pause.circle.fill"
+        }
+    }
+
+    private var statusColor: Color {
+        switch operation {
+        case .scanning: .accentColor
+        case .idle, .held: .secondary
+        }
+    }
+
+    private func startRapidScan(direction: Int) {
+        guard radioManager.isConnected, !radioManager.isBusy else { return }
+
+        scanError = nil
+        scanMonitoringTask?.cancel()
+        operation = .scanning(direction: direction)
+        let mode: FrequencyMode = direction > 0 ? .scanUp : .scanDown
+
+        scanMonitoringTask = Task { @MainActor in
+            do {
+                try await sendFrequencyMode(mode)
+                try await monitorNativeScan(direction: direction, mode: mode)
+            } catch is CancellationError {
+                return
+            } catch {
+                if !Task.isCancelled {
+                    operation = .idle
+                    scanMonitoringTask = nil
+                    scanError = "Scan stopped: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func holdScan() {
+        guard isScanning else { return }
+        let direction = operation.direction
+        scanMonitoringTask?.cancel()
+        scanMonitoringTask = nil
+        operation = .held(direction: direction)
+        applyFrequencyMode(.off)
+    }
+
+    private func resumeScan() {
+        guard case .held(let direction) = operation else { return }
+        startRapidScan(direction: direction)
+    }
+
+    private func stopRapidScan() {
+        stopScan()
+    }
+
+    private func stopScan() {
+        scanMonitoringTask?.cancel()
+        scanMonitoringTask = nil
+        operation = .idle
+        guard radioManager.isConnected else { return }
+        applyFrequencyMode(.off)
+    }
+
+    private func fineTune(direction: Int) {
+        if isScanning {
+            holdScan()
+        }
+        scanStore.move(direction: direction, usingFineTuning: true)
+        operation = .held(direction: operation.direction)
         applyFrequencyMode(.exact)
     }
 
-    private var canStartRapidScan: Bool {
-        radioManager.isConnected && !radioManager.isBusy && !isRapidScanning
+    private func tuneExactly(_ frequencyMHz: Double) {
+        if isScanning {
+            holdScan()
+        }
+        scanStore.setCurrentMHz(frequencyMHz)
+        operation = .held(direction: operation.direction)
+        applyFrequencyMode(.exact)
+    }
+
+    private func save(_ hit: AdvancedFrequencyScanStore.ScanHit, to channel: ChannelType) {
+        Task { @MainActor in
+            do {
+                try await radioManager.tuneVFO(hit.frequencyMHz, for: channel)
+            } catch {
+                scanError = "Unable to save hit to VFO: \(error.localizedDescription)"
+            }
+        }
     }
 
     private func applyFrequencyMode(_ mode: FrequencyMode) {
         scanError = nil
         Task { @MainActor in
             do {
-                try await radioManager.setFrequencyScan(
-                    frequencyMHz: scanStore.currentMHz,
-                    mode: mode,
-                    stepKHz: scanStore.scanStepKHz
-                )
+                try await sendFrequencyMode(mode)
             } catch {
                 scanError = "Unable to update frequency scan: \(error.localizedDescription)"
             }
         }
     }
 
-    private func startRapidScan(direction: Int) {
-        guard canStartRapidScan else { return }
-
-        scanError = nil
-        isRapidScanning = true
-        let mode: FrequencyMode = direction > 0 ? .scanUp : .scanDown
-        scanMonitoringTask = Task { @MainActor in
-            do {
-                try await radioManager.setFrequencyScan(
-                    frequencyMHz: scanStore.currentMHz,
-                    mode: mode,
-                    stepKHz: scanStore.scanStepKHz
-                )
-                try await monitorNativeScan(direction: direction, mode: mode)
-            } catch is CancellationError {
-                return
-            } catch {
-                if !Task.isCancelled {
-                    scanError = "Scan stopped: \(error.localizedDescription)"
-                    isRapidScanning = false
-                    scanMonitoringTask = nil
-                }
-            }
-        }
-    }
-
-    private func stopRapidScan() {
-        scanMonitoringTask?.cancel()
-        scanMonitoringTask = nil
-        isRapidScanning = false
-        guard radioManager.isConnected else { return }
-        applyFrequencyMode(.off)
+    private func sendFrequencyMode(_ mode: FrequencyMode) async throws {
+        try await radioManager.setFrequencyScan(
+            frequencyMHz: scanStore.currentMHz,
+            mode: mode,
+            stepKHz: scanStore.scanStepKHz
+        )
     }
 
     private func monitorNativeScan(direction: Int, mode: FrequencyMode) async throws {
-        while !Task.isCancelled && isRapidScanning {
-            try await Task.sleep(nanoseconds: 300_000_000)
+        while !Task.isCancelled && isScanning {
+            try await Task.sleep(nanoseconds: 100_000_000)
             let status = try await radioManager.getFrequencyScanStatus()
+
+            if status.rxMHz < scanStore.startMHz || status.rxMHz > scanStore.endMHz {
+                scanStore.setCurrentMHz(direction > 0 ? scanStore.startMHz : scanStore.endMHz)
+                try await sendFrequencyMode(mode)
+                continue
+            }
+
             scanStore.setCurrentMHz(status.rxMHz)
 
             guard status.mode == mode else {
-                isRapidScanning = false
+                operation = status.isTuned ? .held(direction: direction) : .idle
                 scanMonitoringTask = nil
                 return
             }
 
-            if status.rxMHz < scanStore.startMHz || status.rxMHz > scanStore.endMHz {
-                scanStore.setCurrentMHz(direction > 0 ? scanStore.startMHz : scanStore.endMHz)
-                try await radioManager.setFrequencyScan(
-                    frequencyMHz: scanStore.currentMHz,
-                    mode: mode,
-                    stepKHz: scanStore.scanStepKHz
-                )
-            } else if status.isTuned && scanStore.autoContinue {
+            guard status.isTuned else { continue }
+
+            scanStore.recordHit(frequencyMHz: status.rxMHz)
+            if scanStore.autoContinue {
                 scanStore.move(direction: direction, usingFineTuning: false)
-                try await radioManager.setFrequencyScan(
-                    frequencyMHz: scanStore.currentMHz,
-                    mode: mode,
-                    stepKHz: scanStore.scanStepKHz
-                )
+                try await sendFrequencyMode(mode)
+            } else {
+                operation = .held(direction: direction)
+                scanMonitoringTask = nil
+                try await sendFrequencyMode(.off)
+                return
             }
         }
     }
@@ -319,5 +570,94 @@ struct AdvancedFrequencyScanView: View {
     private func stepLabel(_ value: Double) -> String {
         value.rounded() == value ? "\(Int(value)) kHz" : "\(value) kHz"
     }
+}
 
+private struct AdvancedScanSetupView: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var store: AdvancedFrequencyScanStore
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Frequency Range") {
+                    TextField(
+                        "Start MHz",
+                        value: Binding(
+                            get: { store.startMHz },
+                            set: { store.setStartMHz($0) }
+                        ),
+                        format: .number.precision(.fractionLength(3))
+                    )
+                    .keyboardType(.decimalPad)
+
+                    TextField(
+                        "End MHz",
+                        value: Binding(
+                            get: { store.endMHz },
+                            set: { store.setEndMHz($0) }
+                        ),
+                        format: .number.precision(.fractionLength(3))
+                    )
+                    .keyboardType(.decimalPad)
+                }
+
+                Section {
+                    ForEach(AdvancedFrequencyScanStore.bandPresets) { preset in
+                        Button {
+                            store.applyPreset(preset)
+                        } label: {
+                            HStack {
+                                Text(preset.name)
+                                Spacer()
+                                Text(
+                                    String(
+                                        format: "%.3f - %.3f MHz",
+                                        preset.startMHz,
+                                        preset.endMHz
+                                    )
+                                )
+                                .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Band Presets")
+                } footer: {
+                    Text("Presets change the range and scan step. Confirm your local band plan before transmitting.")
+                }
+
+                Section("Steps") {
+                    Picker("Scan Step", selection: $store.scanStepKHz) {
+                        ForEach(AdvancedFrequencyScanStore.scanStepOptions, id: \.self) { step in
+                            Text(stepLabel(step)).tag(step)
+                        }
+                    }
+
+                    Picker("Fine Tune Step", selection: $store.fineTuningStepKHz) {
+                        ForEach(AdvancedFrequencyScanStore.fineTuningStepOptions, id: \.self) { step in
+                            Text(stepLabel(step)).tag(step)
+                        }
+                    }
+                }
+
+                Section {
+                    Toggle("Continue after a signal", isOn: $store.autoContinue)
+                } footer: {
+                    Text("When off, the radio holds on a detected signal until you choose Resume.")
+                }
+            }
+            .navigationTitle("Scan Setup")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+
+    private func stepLabel(_ value: Double) -> String {
+        value.rounded() == value ? "\(Int(value)) kHz" : "\(value) kHz"
+    }
 }
