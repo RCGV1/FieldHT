@@ -46,8 +46,12 @@ enum AdvancedFrequencyScanTests {
             expect(scan.contains("GlassEffectContainer"), "native scan controls must use the iOS liquid glass container when available")
             expect(scan.contains("buttonStyle(.glass)"), "native scan controls must use the iOS glass button style when available")
             expect(scan.contains("rxSubAudio"), "scan hits must retain the radio-reported receive tone")
+            expect(scan.contains("txSubAudio"), "scan hits must retain the radio-reported transmit tone")
+            expect(scan.contains("Transmit Tone"), "saved scan hits must show the detected transmit tone")
             expect(scan.contains("onDelete"), "recent scan hits must support swipe deletion")
             expect(scan.contains("ScanHitSaveSheet"), "scan hits must open a memory-slot save sheet")
+            expect(scan.contains("tuneAndMonitor"), "tapping a recent hit must enter monitor mode")
+            expect(scan.contains("setMonitoringMHz"), "monitoring a hit must not clamp it to the scan range")
             expect(scan.contains("if case .held = operation"), "fine tuning must only appear while the scan is held")
             expect(scan.contains("startHeldMonitoring(direction: direction)"), "a signal-held scan must keep monitoring instead of turning the radio scan mode off")
             expect(scan.contains("private func monitorHeldFrequency"), "a signal-held scan must continue reading the radio's live frequency status")
@@ -55,6 +59,8 @@ enum AdvancedFrequencyScanTests {
             expect(scan.contains("currentTransmitTone"), "active scanning must retain the live transmit CTCSS or DCS value")
             expect(scan.contains("RX Tone"), "active scanning must display the live received CTCSS or DCS value")
             expect(scan.contains("TX Tone"), "active scanning must display the live transmit CTCSS or DCS value")
+            expect(scan.contains("stopAtScanBoundary"), "scanning must stop instead of wrapping at a range boundary")
+            expect(scan.contains("Reached scan boundary"), "the scan boundary stop must be communicated to the operator")
         }
 
         let settings = try String(contentsOf: settingsURL, encoding: .utf8)

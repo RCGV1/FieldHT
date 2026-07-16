@@ -8,7 +8,52 @@ final class AdvancedFrequencyScanStore: ObservableObject {
         let id: UUID
         let frequencyMHz: Double
         let rxSubAudio: SubAudio?
+        let txSubAudio: SubAudio?
         let detectedAt: Date
+
+        init(
+            id: UUID = UUID(),
+            frequencyMHz: Double,
+            rxSubAudio: SubAudio?,
+            txSubAudio: SubAudio?,
+            detectedAt: Date = .now
+        ) {
+            self.id = id
+            self.frequencyMHz = frequencyMHz
+            self.rxSubAudio = rxSubAudio
+            self.txSubAudio = txSubAudio
+            self.detectedAt = detectedAt
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case id, frequencyMHz, rxSubAudio, txSubAudio, detectedAt
+        }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            id = try values.decode(UUID.self, forKey: .id)
+            frequencyMHz = try values.decode(Double.self, forKey: .frequencyMHz)
+            rxSubAudio = try values.decodeIfPresent(SubAudio.self, forKey: .rxSubAudio)
+            txSubAudio = try values.decodeIfPresent(SubAudio.self, forKey: .txSubAudio)
+            detectedAt = try values.decode(Date.self, forKey: .detectedAt)
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var values = encoder.container(keyedBy: CodingKeys.self)
+            try values.encode(id, forKey: .id)
+            try values.encode(frequencyMHz, forKey: .frequencyMHz)
+            try values.encodeIfPresent(rxSubAudio, forKey: .rxSubAudio)
+            try values.encodeIfPresent(txSubAudio, forKey: .txSubAudio)
+            try values.encode(detectedAt, forKey: .detectedAt)
+        }
+
+        var toneSummary: String? {
+            let labels = [
+                rxSubAudio.map { "RX \($0.scanToneLabel)" },
+                txSubAudio.map { "TX \($0.scanToneLabel)" }
+            ].compactMap { $0 }
+            return labels.isEmpty ? nil : labels.joined(separator: "  ")
+        }
     }
 
     struct BandPreset: Identifiable {
@@ -89,23 +134,30 @@ final class AdvancedFrequencyScanStore: ObservableObject {
         persist()
     }
 
-    func move(direction: Int, usingFineTuning: Bool) {
+    @discardableResult
+    func move(direction: Int, usingFineTuning: Bool) -> Bool {
         let stepMHz = (usingFineTuning ? fineTuningStepKHz : scanStepKHz) / 1_000
         let candidate = currentMHz + (Double(direction) * stepMHz)
-
-        if candidate > endMHz {
-            currentMHz = startMHz
-        } else if candidate < startMHz {
-            currentMHz = endMHz
-        } else {
-            currentMHz = candidate
-        }
-
+        let boundedCandidate = min(max(candidate, startMHz), endMHz)
+        let moved = abs(boundedCandidate - currentMHz) > 0.000_001
+        currentMHz = boundedCandidate
         persist()
+        return moved
     }
 
     func setCurrentMHz(_ value: Double) {
         currentMHz = min(max(value, startMHz), endMHz)
+        persist()
+    }
+
+    func setMonitoringMHz(_ value: Double) {
+        currentMHz = value
+        persist()
+    }
+
+    func prepareForScan(direction: Int) {
+        guard currentMHz < startMHz || currentMHz > endMHz else { return }
+        currentMHz = direction > 0 ? startMHz : endMHz
         persist()
     }
 
@@ -135,13 +187,18 @@ final class AdvancedFrequencyScanStore: ObservableObject {
         }
     }
 
-    func recordHit(frequencyMHz: Double, rxSubAudio: SubAudio?) {
+    func recordHit(
+        frequencyMHz: Double,
+        rxSubAudio: SubAudio?,
+        txSubAudio: SubAudio?
+    ) {
         hits.removeAll { abs($0.frequencyMHz - frequencyMHz) < 0.000_001 }
         hits.insert(
             ScanHit(
                 id: UUID(),
                 frequencyMHz: frequencyMHz,
                 rxSubAudio: rxSubAudio,
+                txSubAudio: txSubAudio,
                 detectedAt: .now
             ),
             at: 0
@@ -203,6 +260,7 @@ struct AdvancedFrequencyScanView: View {
     @State private var scanMonitoringTask: Task<Void, Never>?
     @State private var heldMonitoringTask: Task<Void, Never>?
     @State private var scanError: String?
+    @State private var scanNotice: String?
     @State private var currentReceiveTone: SubAudio?
     @State private var currentTransmitTone: SubAudio?
     @State private var isShowingSetup = false
@@ -239,6 +297,13 @@ struct AdvancedFrequencyScanView: View {
             }
 
             recentHits
+
+            if let scanNotice {
+                Section {
+                    Label(scanNotice, systemImage: "stop.circle")
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             if let scanError {
                 Section {
@@ -424,7 +489,7 @@ struct AdvancedFrequencyScanView: View {
     private func hitRow(_ hit: AdvancedFrequencyScanStore.ScanHit) -> some View {
         HStack {
             Button {
-                tuneExactly(hit.frequencyMHz)
+                tuneAndMonitor(hit)
             } label: {
                 HStack {
                     Image(systemName: "dot.radiowaves.left.and.right")
@@ -432,8 +497,8 @@ struct AdvancedFrequencyScanView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(String(format: "%.4f MHz", hit.frequencyMHz))
                             .font(.body.monospacedDigit())
-                        if let rxSubAudio = hit.rxSubAudio {
-                            Text(rxSubAudio.scanToneLabel)
+                        if let toneSummary = hit.toneSummary {
+                            Text(toneSummary)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         } else {
@@ -530,6 +595,8 @@ struct AdvancedFrequencyScanView: View {
         }
 
         scanError = nil
+        scanNotice = nil
+        scanStore.prepareForScan(direction: direction)
         lastFrequencyScanNotificationAt = nil
         scanMonitoringTask?.cancel()
         heldMonitoringTask?.cancel()
@@ -588,18 +655,21 @@ struct AdvancedFrequencyScanView: View {
             scanMonitoringTask?.cancel()
             scanMonitoringTask = nil
         }
-        scanStore.move(direction: direction, usingFineTuning: true)
+        _ = scanStore.move(direction: direction, usingFineTuning: true)
         operation = .held(direction: operation.direction)
         applyFrequencyMode(.exact)
         startHeldMonitoring(direction: operation.direction)
     }
 
-    private func tuneExactly(_ frequencyMHz: Double) {
+    private func tuneAndMonitor(_ hit: AdvancedFrequencyScanStore.ScanHit) {
         if isScanning {
             scanMonitoringTask?.cancel()
             scanMonitoringTask = nil
         }
-        scanStore.setCurrentMHz(frequencyMHz)
+        scanNotice = nil
+        scanStore.setMonitoringMHz(hit.frequencyMHz)
+        currentReceiveTone = hit.rxSubAudio
+        currentTransmitTone = hit.txSubAudio
         operation = .held(direction: operation.direction)
         applyFrequencyMode(.exact)
         startHeldMonitoring(direction: operation.direction)
@@ -629,9 +699,16 @@ struct AdvancedFrequencyScanView: View {
             try await Task.sleep(nanoseconds: 100_000_000)
             guard let status = try await nextFrequencyScanStatus() else { continue }
 
-            if status.rxMHz < scanStore.startMHz || status.rxMHz > scanStore.endMHz {
-                scanStore.setCurrentMHz(direction > 0 ? scanStore.startMHz : scanStore.endMHz)
-                try await sendFrequencyMode(mode)
+            if hasReachedScanBoundary(status, direction: direction) {
+                updateLiveStatus(status)
+                if status.isTuned {
+                    scanStore.recordHit(
+                        frequencyMHz: status.rxMHz,
+                        rxSubAudio: status.rxSubAudio,
+                        txSubAudio: status.txSubAudio
+                    )
+                }
+                try await stopAtScanBoundary(direction: direction)
                 continue
             }
 
@@ -640,7 +717,8 @@ struct AdvancedFrequencyScanView: View {
             if status.isTuned {
                 scanStore.recordHit(
                     frequencyMHz: status.rxMHz,
-                    rxSubAudio: status.rxSubAudio
+                    rxSubAudio: status.rxSubAudio,
+                    txSubAudio: status.txSubAudio
                 )
             }
 
@@ -653,7 +731,10 @@ struct AdvancedFrequencyScanView: View {
             guard status.isTuned else { continue }
 
             if scanStore.autoContinue {
-                scanStore.move(direction: direction, usingFineTuning: false)
+                guard scanStore.move(direction: direction, usingFineTuning: false) else {
+                    try await stopAtScanBoundary(direction: direction)
+                    return
+                }
                 try await sendFrequencyMode(mode)
             } else {
                 operation = .held(direction: direction)
@@ -689,7 +770,8 @@ struct AdvancedFrequencyScanView: View {
             if status.isTuned {
                 scanStore.recordHit(
                     frequencyMHz: status.rxMHz,
-                    rxSubAudio: status.rxSubAudio
+                    rxSubAudio: status.rxSubAudio,
+                    txSubAudio: status.txSubAudio
                 )
             }
 
@@ -702,9 +784,30 @@ struct AdvancedFrequencyScanView: View {
     }
 
     private func updateLiveStatus(_ status: FrequencyModeStatus) {
-        scanStore.setCurrentMHz(status.rxMHz)
+        if isScanning {
+            scanStore.setCurrentMHz(status.rxMHz)
+        } else {
+            scanStore.setMonitoringMHz(status.rxMHz)
+        }
         currentReceiveTone = status.rxSubAudio
         currentTransmitTone = status.txSubAudio
+    }
+
+    private func hasReachedScanBoundary(
+        _ status: FrequencyModeStatus,
+        direction: Int
+    ) -> Bool {
+        direction > 0
+            ? status.rxMHz >= scanStore.endMHz
+            : status.rxMHz <= scanStore.startMHz
+    }
+
+    private func stopAtScanBoundary(direction: Int) async throws {
+        scanStore.setCurrentMHz(direction > 0 ? scanStore.endMHz : scanStore.startMHz)
+        operation = .idle
+        scanMonitoringTask = nil
+        scanNotice = "Reached scan boundary."
+        try await sendFrequencyMode(.off)
     }
 
     private func loadSupportedRanges() {
@@ -893,6 +996,9 @@ private struct ScanHitSaveSheet: View {
                     }
                     if let rxSubAudio = hit.rxSubAudio {
                         LabeledContent("Receive Tone", value: rxSubAudio.scanToneLabel)
+                    }
+                    if let txSubAudio = hit.txSubAudio {
+                        LabeledContent("Transmit Tone", value: txSubAudio.scanToneLabel)
                     }
                 }
 
