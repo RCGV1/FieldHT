@@ -615,12 +615,16 @@ public class RadioController: ObservableObject {
     public func setFrequencyScan(
         frequencyMHz: Double,
         mode: FrequencyMode,
-        step: FrequencyScanStep
+        step: FrequencyScanStep,
+        rxSubAudio: SubAudio?,
+        txSubAudio: SubAudio?
     ) async throws {
         let frequencyHz = UInt32(max(0, Int((frequencyMHz * 1_000_000.0).rounded())))
         try await connection.setFreqModeParameters(
             rxFreqHzX: frequencyHz,
             txFreqHzX: frequencyHz,
+            rxSubAudio: rxSubAudio,
+            txSubAudio: txSubAudio,
             mode: mode,
             step: step
         )

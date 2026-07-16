@@ -1154,7 +1154,9 @@ public class RadioManager: ObservableObject {
     public func setFrequencyScan(
         frequencyMHz: Double,
         mode: FrequencyMode,
-        stepKHz: Double
+        stepKHz: Double,
+        rxSubAudio: SubAudio?,
+        txSubAudio: SubAudio?
     ) async throws {
         guard let controller = radioController else { throw BLEError.notConnected }
         isBusy = true
@@ -1162,7 +1164,9 @@ public class RadioManager: ObservableObject {
         try await controller.setFrequencyScan(
             frequencyMHz: frequencyMHz,
             mode: mode,
-            step: FrequencyScanStep(kHz: stepKHz)
+            step: FrequencyScanStep(kHz: stepKHz),
+            rxSubAudio: rxSubAudio,
+            txSubAudio: txSubAudio
         )
     }
 

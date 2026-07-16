@@ -606,6 +606,9 @@ struct AdvancedFrequencyScanView: View {
 
         scanMonitoringTask = Task { @MainActor in
             do {
+                let initialStatus = try await radioManager.getFrequencyScanStatus()
+                currentReceiveTone = initialStatus.rxSubAudio
+                currentTransmitTone = initialStatus.txSubAudio
                 try await sendFrequencyMode(mode)
                 try await monitorNativeScan(direction: direction, mode: mode)
             } catch is CancellationError {
@@ -690,7 +693,9 @@ struct AdvancedFrequencyScanView: View {
         try await radioManager.setFrequencyScan(
             frequencyMHz: scanStore.currentMHz,
             mode: mode,
-            stepKHz: scanStore.scanStepKHz
+            stepKHz: scanStore.scanStepKHz,
+            rxSubAudio: currentReceiveTone,
+            txSubAudio: currentTransmitTone
         )
     }
 
