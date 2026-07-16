@@ -299,6 +299,21 @@ public class CommandConnection: BLEConnectionDelegate {
         return status
     }
 
+    public func getFrequencyRanges() async throws -> DeviceFrequencyRanges {
+        let reply = try await sendCommandAndWaitForReply(
+            commandGroup: .basic,
+            command: BasicCommand.readFreqRange.rawValue,
+            body: Data()
+        )
+        guard case .reply(.frequencyRanges(let ranges)) = reply else {
+            if case .reply(.error(let status, let message)) = reply {
+                throw ProtocolError.commandFailed(status, message)
+            }
+            throw ProtocolError.invalidReply
+        }
+        return ranges
+    }
+
     public func setSatModeInfo(
         name: String,
         rangeKm: Double,
@@ -347,6 +362,15 @@ public class CommandConnection: BLEConnectionDelegate {
         case (.basic, BasicCommand.freqModeSetPar.rawValue):
             // Reverse-engineered command 35 (freqModeSetPar). Treat reply as ack.
             return .success
+
+        case (.basic, BasicCommand.readFreqRange.rawValue):
+            let replyStatus = try decodeReplyStatus(message.body)
+            guard replyStatus == .success else {
+                return .error(replyStatus, "Failed to get frequency ranges")
+            }
+            return .frequencyRanges(
+                try ProtocolDecoder.decodeFrequencyRanges(Data(message.body.dropFirst(1)))
+            )
 
         case (.basic, BasicCommand.satModeSetInfo.rawValue):
             // Reverse-engineered command 77 (satModeSetInfo). Treat reply as ack.
@@ -670,6 +694,9 @@ public class CommandConnection: BLEConnectionDelegate {
         case .dataTxd:
             let fragment = try ProtocolDecoder.decodeTncDataFragment(eventData)
             return .tncDataFragmentTransmitted(fragment)
+
+        case .frequencyScanStatusChanged:
+            return .frequencyModeStatus(try ProtocolDecoder.decodeFrequencyModeStatus(eventData))
             
         default:
             print("[BLE-EVENT-RAW] type=\(eventType) body=\(hexString(eventData))")

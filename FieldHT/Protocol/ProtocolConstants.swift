@@ -125,4 +125,5 @@ public enum EventType: UInt8 {
     case bssSettingsChanged = 11  // BSS_SETTINGS_CHANGED
     case dataTxd = 12             // DATA_TXD
     case positionChanged = 13     // POSITION_CHANGE
+    case frequencyScanStatusChanged = 14 // FREQ_SCAN_STATUS_CHANGED
 }

@@ -47,6 +47,44 @@ public struct FrequencyModeStatus: Sendable, Equatable {
     public let isSeeking: Bool
 }
 
+public enum FrequencyRangeDirection: Sendable, Equatable {
+    case receive
+    case transmit
+}
+
+public enum FrequencyRangeModulation: Sendable, Equatable {
+    case fm
+    case am
+    case dmr
+}
+
+public struct FrequencyRange: Identifiable, Sendable, Equatable {
+    public let lowerMHz: Double
+    public let upperMHz: Double
+    public let direction: FrequencyRangeDirection
+    public let modulation: FrequencyRangeModulation
+
+    public var id: String {
+        "\(direction)-\(modulation)-\(lowerMHz)-\(upperMHz)"
+    }
+
+    public var displayName: String {
+        String(format: "%.0f - %.0f MHz", lowerMHz, upperMHz)
+    }
+
+    public func contains(_ frequencyMHz: Double) -> Bool {
+        (lowerMHz...upperMHz).contains(frequencyMHz)
+    }
+}
+
+public struct DeviceFrequencyRanges: Sendable, Equatable {
+    public let ranges: [FrequencyRange]
+
+    public var receiveFMRanges: [FrequencyRange] {
+        ranges.filter { $0.direction == .receive && $0.modulation == .fm }
+    }
+}
+
 /// Reply message types
 public enum ReplyMessage {
     case deviceInfo(DeviceInfo)
@@ -65,6 +103,7 @@ public enum ReplyMessage {
     case pfActions(Data)
     case volume(Int)
     case frequencyModeStatus(FrequencyModeStatus)
+    case frequencyRanges(DeviceFrequencyRanges)
     case registerNotificationAck(UInt8)
     case success
     case error(ReplyStatus, String)

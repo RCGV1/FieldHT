@@ -1171,6 +1171,11 @@ public class RadioManager: ObservableObject {
         return try await controller.getFrequencyScanStatus()
     }
 
+    public func getFrequencyRanges() async throws -> DeviceFrequencyRanges {
+        guard let controller = radioController else { throw BLEError.notConnected }
+        return try await controller.getFrequencyRanges()
+    }
+
     public func memoryChannel(inRegion regionID: Int, slot: Int) async throws -> Channel {
         guard let controller = radioController else { throw BLEError.notConnected }
         isBusy = true

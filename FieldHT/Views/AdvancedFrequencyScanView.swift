@@ -117,6 +117,24 @@ final class AdvancedFrequencyScanStore: ObservableObject {
         persist()
     }
 
+    func applySupportedRange(_ range: FrequencyRange) {
+        startMHz = range.lowerMHz
+        endMHz = range.upperMHz
+        currentMHz = min(max(currentMHz, startMHz), endMHz)
+        persist()
+    }
+
+    func constrain(to ranges: [FrequencyRange]) {
+        guard !ranges.isEmpty else { return }
+        guard !ranges.contains(where: { $0.contains(startMHz) && $0.contains(endMHz) }) else { return }
+
+        if let currentRange = ranges.first(where: { $0.contains(currentMHz) }) {
+            applySupportedRange(currentRange)
+        } else if let firstRange = ranges.first {
+            applySupportedRange(firstRange)
+        }
+    }
+
     func recordHit(frequencyMHz: Double, rxSubAudio: SubAudio?) {
         hits.removeAll { abs($0.frequencyMHz - frequencyMHz) < 0.000_001 }
         hits.insert(
@@ -189,6 +207,8 @@ struct AdvancedFrequencyScanView: View {
     @State private var currentTransmitTone: SubAudio?
     @State private var isShowingSetup = false
     @State private var hitToSave: AdvancedFrequencyScanStore.ScanHit?
+    @State private var supportedReceiveRanges: [FrequencyRange] = []
+    @State private var lastFrequencyScanNotificationAt: Date?
 
     private var isScanning: Bool {
         if case .scanning = operation { return true }
@@ -198,6 +218,10 @@ struct AdvancedFrequencyScanView: View {
     private var isHeld: Bool {
         if case .held = operation { return true }
         return false
+    }
+
+    private var isNotificationSupported: Bool {
+        radioManager.radioController?.supportsFrequencyScanStatusNotifications == true
     }
 
     var body: some View {
@@ -237,11 +261,22 @@ struct AdvancedFrequencyScanView: View {
             }
         }
         .sheet(isPresented: $isShowingSetup) {
-            AdvancedScanSetupView(store: scanStore)
+            AdvancedScanSetupView(
+                store: scanStore,
+                supportedReceiveRanges: supportedReceiveRanges
+            )
         }
         .sheet(item: $hitToSave) { hit in
             ScanHitSaveSheet(hit: hit)
                 .environmentObject(radioManager)
+        }
+        .onAppear(perform: loadSupportedRanges)
+        .onChange(of: radioManager.isConnected) { _, isConnected in
+            if isConnected {
+                loadSupportedRanges()
+            } else {
+                supportedReceiveRanges = []
+            }
         }
         .onDisappear(perform: stopScan)
     }
@@ -486,8 +521,16 @@ struct AdvancedFrequencyScanView: View {
 
     private func startRapidScan(direction: Int) {
         guard radioManager.isConnected, !radioManager.isBusy else { return }
+        guard supportedReceiveRanges.isEmpty || supportedReceiveRanges.contains(where: {
+            $0.contains(scanStore.startMHz) && $0.contains(scanStore.endMHz)
+        }) else {
+            scanError = "Choose a receive range supported by this radio before scanning."
+            isShowingSetup = true
+            return
+        }
 
         scanError = nil
+        lastFrequencyScanNotificationAt = nil
         scanMonitoringTask?.cancel()
         heldMonitoringTask?.cancel()
         heldMonitoringTask = nil
@@ -534,6 +577,7 @@ struct AdvancedFrequencyScanView: View {
         scanMonitoringTask = nil
         heldMonitoringTask?.cancel()
         heldMonitoringTask = nil
+        lastFrequencyScanNotificationAt = nil
         operation = .idle
         guard radioManager.isConnected else { return }
         applyFrequencyMode(.off)
@@ -583,7 +627,7 @@ struct AdvancedFrequencyScanView: View {
     private func monitorNativeScan(direction: Int, mode: FrequencyMode) async throws {
         while !Task.isCancelled && isScanning {
             try await Task.sleep(nanoseconds: 100_000_000)
-            let status = try await radioManager.getFrequencyScanStatus()
+            guard let status = try await nextFrequencyScanStatus() else { continue }
 
             if status.rxMHz < scanStore.startMHz || status.rxMHz > scanStore.endMHz {
                 scanStore.setCurrentMHz(direction > 0 ? scanStore.startMHz : scanStore.endMHz)
@@ -639,7 +683,7 @@ struct AdvancedFrequencyScanView: View {
     private func monitorHeldFrequency(direction: Int) async throws {
         while !Task.isCancelled && isHeld {
             try await Task.sleep(nanoseconds: 500_000_000)
-            let status = try await radioManager.getFrequencyScanStatus()
+            guard let status = try await nextFrequencyScanStatus() else { continue }
             updateLiveStatus(status)
 
             if status.isTuned {
@@ -663,6 +707,41 @@ struct AdvancedFrequencyScanView: View {
         currentTransmitTone = status.txSubAudio
     }
 
+    private func loadSupportedRanges() {
+        guard radioManager.isConnected else { return }
+
+        Task { @MainActor in
+            do {
+                let ranges = try await radioManager.getFrequencyRanges().receiveFMRanges
+                supportedReceiveRanges = ranges
+                scanStore.constrain(to: ranges)
+            } catch {
+                // Older firmware can omit command 39; manual band-plan entry remains available.
+                supportedReceiveRanges = []
+            }
+        }
+    }
+
+    /// Prefer status-change events when firmware advertises capability 143. If that
+    /// stream is quiet, use the stock app's command-36 polling fallback.
+    private func nextFrequencyScanStatus() async throws -> FrequencyModeStatus? {
+        if isNotificationSupported,
+           let controller = radioManager.radioController,
+           let updatedAt = controller.frequencyScanStatusUpdatedAt,
+           let notificationStatus = controller.frequencyScanStatus {
+            if updatedAt != lastFrequencyScanNotificationAt {
+                lastFrequencyScanNotificationAt = updatedAt
+                return notificationStatus
+            }
+
+            if Date.now.timeIntervalSince(updatedAt) < 0.75 {
+                return nil
+            }
+        }
+
+        return try await radioManager.getFrequencyScanStatus()
+    }
+
     private func stepLabel(_ value: Double) -> String {
         value.rounded() == value ? "\(Int(value)) kHz" : "\(value) kHz"
     }
@@ -671,6 +750,7 @@ struct AdvancedFrequencyScanView: View {
 private struct AdvancedScanSetupView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var store: AdvancedFrequencyScanStore
+    let supportedReceiveRanges: [FrequencyRange]
 
     var body: some View {
         NavigationStack {
@@ -697,10 +777,34 @@ private struct AdvancedScanSetupView: View {
                     .keyboardType(.decimalPad)
                 }
 
+                if !supportedReceiveRanges.isEmpty {
+                    Section {
+                        ForEach(supportedReceiveRanges) { range in
+                            Button {
+                                store.applySupportedRange(range)
+                            } label: {
+                                HStack {
+                                    Text(range.displayName)
+                                    Spacer()
+                                    if range.contains(store.startMHz) && range.contains(store.endMHz) {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(.tint)
+                                    }
+                                }
+                            }
+                        }
+                    } header: {
+                        Text("Radio Ranges")
+                    } footer: {
+                        Text("Receive ranges reported by the connected radio.")
+                    }
+                }
+
                 Section {
                     ForEach(AdvancedFrequencyScanStore.bandPresets) { preset in
                         Button {
                             store.applyPreset(preset)
+                            store.constrain(to: supportedReceiveRanges)
                         } label: {
                             HStack {
                                 Text(preset.name)

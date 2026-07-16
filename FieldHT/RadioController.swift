@@ -6,6 +6,9 @@ public class RadioController: ObservableObject {
     private let connection: CommandConnection
     
     @Published public private(set) var state: RadioState?
+    @Published public private(set) var frequencyScanStatus: FrequencyModeStatus?
+    @Published public private(set) var frequencyScanStatusUpdatedAt: Date?
+    @Published public private(set) var frequencyRanges: DeviceFrequencyRanges?
     private var channels: [Int: [Int: Channel]] = [:] // regionID -> channelID -> Channel
     private var backgroundHydrationTask: Task<Void, Never>?
     private var removeConnectionEventHandler: (() -> Void)?
@@ -32,6 +35,10 @@ public class RadioController: ObservableObject {
     /// Device info
     public var deviceInfo: DeviceInfo {
         return state?.deviceInfo ?? DeviceInfo.empty()
+    }
+
+    public var supportsFrequencyScanStatusNotifications: Bool {
+        deviceInfo.firmwareVersion >= 143
     }
 
     private func isValidChannelID(_ channelID: Int, deviceInfo: DeviceInfo) -> Bool {
@@ -170,13 +177,17 @@ public class RadioController: ObservableObject {
             self?.handleEvent(event)
         }
 
-        for eventType in [
+        var eventTypes: [EventType] = [
             EventType.htStatusChanged,
             .htChChanged,
             .htSettingsChanged,
             .radioStatusChanged,
             .bssSettingsChanged
-        ] {
+        ]
+        if deviceInfo.firmwareVersion >= 143 {
+            eventTypes.append(.frequencyScanStatusChanged)
+        }
+        for eventType in eventTypes {
             try? await connection.enableEvent(eventType)
         }
 
@@ -439,6 +450,9 @@ public class RadioController: ObservableObject {
                 print("RadioController: dataRxd fragment=\(fragment.fragmentID) final=\(fragment.isFinalFragment) bytes=\(fragment.data.count)")
             case .tncDataFragmentTransmitted(let fragment):
                 print("RadioController: dataTxd fragment=\(fragment.fragmentID) final=\(fragment.isFinalFragment) bytes=\(fragment.data.count)")
+            case .frequencyModeStatus(let status):
+                self.frequencyScanStatus = status
+                self.frequencyScanStatusUpdatedAt = .now
             case .raw(let eventType, let data):
                 let hex = data.map { String(format: "%02hhx", $0) }.joined()
                 print("RadioController: raw event \(eventType) body=\(hex)")
@@ -614,6 +628,14 @@ public class RadioController: ObservableObject {
 
     public func getFrequencyScanStatus() async throws -> FrequencyModeStatus {
         try await connection.getFreqModeStatus()
+    }
+
+    public func getFrequencyRanges() async throws -> DeviceFrequencyRanges {
+        let ranges = try await connection.getFrequencyRanges()
+        await MainActor.run {
+            self.frequencyRanges = ranges
+        }
+        return ranges
     }
 
     public func setSatModeInfo(

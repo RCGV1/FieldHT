@@ -240,6 +240,48 @@ public struct ProtocolDecoder {
             isSeeking: isSeeking
         )
     }
+
+    public static func decodeFrequencyRanges(_ data: Data) throws -> DeviceFrequencyRanges {
+        guard data.count.isMultiple(of: 4) else {
+            throw ProtocolError.decodeError("Invalid frequency range payload length")
+        }
+
+        var stream = BitStream(data: data)
+        var ranges: [FrequencyRange] = []
+
+        while stream.remaining >= 32 {
+            let supportsTransmitFM = try stream.readBool()
+            let disablesReceiveFM = try stream.readBool()
+            let supportsTransmitDMR = try stream.readBool()
+            let lowerMHz = try stream.readInt(13) & 0x3FF
+            let supportsTransmitAM = try stream.readBool()
+            let supportsReceiveAM = try stream.readBool()
+            let supportsReceiveDMR = try stream.readBool()
+            let upperMHz = try stream.readInt(13) & 0x3FF
+
+            guard lowerMHz < upperMHz else { continue }
+
+            func appendRange(direction: FrequencyRangeDirection, modulation: FrequencyRangeModulation) {
+                ranges.append(
+                    FrequencyRange(
+                        lowerMHz: Double(lowerMHz),
+                        upperMHz: Double(upperMHz),
+                        direction: direction,
+                        modulation: modulation
+                    )
+                )
+            }
+
+            if !disablesReceiveFM { appendRange(direction: .receive, modulation: .fm) }
+            if supportsTransmitFM { appendRange(direction: .transmit, modulation: .fm) }
+            if supportsReceiveAM { appendRange(direction: .receive, modulation: .am) }
+            if supportsTransmitAM { appendRange(direction: .transmit, modulation: .am) }
+            if supportsReceiveDMR { appendRange(direction: .receive, modulation: .dmr) }
+            if supportsTransmitDMR { appendRange(direction: .transmit, modulation: .dmr) }
+        }
+
+        return DeviceFrequencyRanges(ranges: ranges)
+    }
     
     // MARK: - Settings Decoding
     

@@ -388,6 +388,35 @@ in FieldHT.
 
 ## Prioritized FieldHT backlog
 
+### Implemented evidence-backed coverage
+
+- FieldHT uses command 35 for `UP`, `DOWN`, `EXACT`, and `OFF` scan modes,
+  keeps a held hit in its existing scan mode, and displays the radio-reported
+  RX/TX sub-audio values.
+- FieldHT registers `FREQ_SCAN_STATUS_CHANGED` when firmware revision 143 or
+  newer advertises it. It uses command 36 as the fallback when that stream is
+  unavailable or has gone quiet.
+- FieldHT reads command 39 device frequency ranges, exposes receive-FM ranges
+  in the scan setup sheet, and prevents a scan from starting outside a selected
+  radio-supported range. Manual band-plan entry remains available for older
+  firmware that does not answer command 39.
+- FieldHT already provides separate VFO A/B control, scan-hit memory saving,
+  APRS path read/write, packet beaconing, Mic-E, APRS ID sending, and smart
+  beacon settings. Firmware gates now match the stock app: APRS path 86,
+  Mic-E 135, APRS ID 138, and extended smart-beacon intervals 146.
+
+### Intentionally deferred pending hardware evidence
+
+- `MODE_TONE_SCAN` is not exposed because this artifact declares it but does
+  not demonstrate a functional call path or capability gate.
+- Speaker-mic BLE audio routing is not exposed because the artifact does not
+  establish safe command values or an end-to-end iOS audio contract.
+
+### Historical implementation checklist
+
+The following items informed the implementation above. Keep the hardware-trace
+item open until it has been captured against a physical radio.
+
 1. **Replace the current advanced-scan behavior with command-35 frequency
    modes.** Add a small typed protocol model for `OFF`, `UP`, `DOWN`, and
    `EXACT`; make satellite mode unavailable to scan controls. Verify every

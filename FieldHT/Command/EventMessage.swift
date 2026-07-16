@@ -10,5 +10,6 @@ public enum EventMessage {
     case positionChanged(Position)
     case tncDataFragmentReceived(TncDataFragment)
     case tncDataFragmentTransmitted(TncDataFragment)
+    case frequencyModeStatus(FrequencyModeStatus)
     case raw(EventType, Data)
 }

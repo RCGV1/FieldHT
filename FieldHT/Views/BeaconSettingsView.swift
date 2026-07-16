@@ -40,6 +40,22 @@ struct BeaconSettingsView: View {
     @State private var smartBeaconMinimumInterval: Int = 0
     @State private var smartBeaconMaximumInterval: Int = 0
     @State private var supportsSmartBeaconIntervals = false
+
+    private var firmwareVersion: Int {
+        radioManager.radioController?.deviceInfo.firmwareVersion ?? 0
+    }
+
+    private var supportsMicE: Bool {
+        firmwareVersion >= 135
+    }
+
+    private var supportsSendIDByAPRS: Bool {
+        firmwareVersion >= 138
+    }
+
+    private var supportsExtendedSmartBeaconing: Bool {
+        firmwareVersion >= 146
+    }
     
     var body: some View {
         Form {
@@ -95,8 +111,12 @@ struct BeaconSettingsView: View {
                     }
 
                     if packetFormat == .aprs {
-                        Toggle("Enable Mic-E", isOn: $micEEnabled)
-                        Toggle("Send ID by APRS", isOn: $sendIDByAPRS)
+                        if supportsMicE {
+                            Toggle("Enable Mic-E", isOn: $micEEnabled)
+                        }
+                        if supportsSendIDByAPRS {
+                            Toggle("Send ID by APRS", isOn: $sendIDByAPRS)
+                        }
                     }
                 }
 
@@ -251,13 +271,19 @@ struct BeaconSettingsView: View {
                 self.timeToLive = currentSettings.timeToLive
                 self.maxFwdTimes = currentSettings.maxFwdTimes
                 self.smartBeaconEnabled = currentSettings.smartBeaconEnabled
-                if let minimum = currentSettings.smartBeaconMinimumInterval,
+                if supportsExtendedSmartBeaconing,
+                   let minimum = currentSettings.smartBeaconMinimumInterval,
                    let maximum = currentSettings.smartBeaconMaximumInterval {
                     self.smartBeaconMinimumInterval = minimum
                     self.smartBeaconMaximumInterval = maximum
                     self.supportsSmartBeaconIntervals = true
                 } else {
                     self.supportsSmartBeaconIntervals = false
+                }
+                guard firmwareVersion >= 86 else {
+                    self.supportsAPRSPath = false
+                    self.isLoading = false
+                    return
                 }
                 do {
                     self.aprsPath = try await radioManager.getAPRSPath()
