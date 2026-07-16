@@ -7,52 +7,16 @@ final class AdvancedFrequencyScanStore: ObservableObject {
     struct ScanHit: Codable, Identifiable, Equatable {
         let id: UUID
         let frequencyMHz: Double
-        let rxSubAudio: SubAudio?
-        let txSubAudio: SubAudio?
         let detectedAt: Date
 
         init(
             id: UUID = UUID(),
             frequencyMHz: Double,
-            rxSubAudio: SubAudio?,
-            txSubAudio: SubAudio?,
             detectedAt: Date = .now
         ) {
             self.id = id
             self.frequencyMHz = frequencyMHz
-            self.rxSubAudio = rxSubAudio
-            self.txSubAudio = txSubAudio
             self.detectedAt = detectedAt
-        }
-
-        private enum CodingKeys: String, CodingKey {
-            case id, frequencyMHz, rxSubAudio, txSubAudio, detectedAt
-        }
-
-        init(from decoder: Decoder) throws {
-            let values = try decoder.container(keyedBy: CodingKeys.self)
-            id = try values.decode(UUID.self, forKey: .id)
-            frequencyMHz = try values.decode(Double.self, forKey: .frequencyMHz)
-            rxSubAudio = try values.decodeIfPresent(SubAudio.self, forKey: .rxSubAudio)
-            txSubAudio = try values.decodeIfPresent(SubAudio.self, forKey: .txSubAudio)
-            detectedAt = try values.decode(Date.self, forKey: .detectedAt)
-        }
-
-        func encode(to encoder: Encoder) throws {
-            var values = encoder.container(keyedBy: CodingKeys.self)
-            try values.encode(id, forKey: .id)
-            try values.encode(frequencyMHz, forKey: .frequencyMHz)
-            try values.encodeIfPresent(rxSubAudio, forKey: .rxSubAudio)
-            try values.encodeIfPresent(txSubAudio, forKey: .txSubAudio)
-            try values.encode(detectedAt, forKey: .detectedAt)
-        }
-
-        var toneSummary: String? {
-            let labels = [
-                rxSubAudio.map { "RX \($0.scanToneLabel)" },
-                txSubAudio.map { "TX \($0.scanToneLabel)" }
-            ].compactMap { $0 }
-            return labels.isEmpty ? nil : labels.joined(separator: "  ")
         }
     }
 
@@ -187,18 +151,12 @@ final class AdvancedFrequencyScanStore: ObservableObject {
         }
     }
 
-    func recordHit(
-        frequencyMHz: Double,
-        rxSubAudio: SubAudio?,
-        txSubAudio: SubAudio?
-    ) {
+    func recordHit(frequencyMHz: Double) {
         hits.removeAll { abs($0.frequencyMHz - frequencyMHz) < 0.000_001 }
         hits.insert(
             ScanHit(
                 id: UUID(),
                 frequencyMHz: frequencyMHz,
-                rxSubAudio: rxSubAudio,
-                txSubAudio: txSubAudio,
                 detectedAt: .now
             ),
             at: 0
@@ -497,15 +455,9 @@ struct AdvancedFrequencyScanView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(String(format: "%.4f MHz", hit.frequencyMHz))
                             .font(.body.monospacedDigit())
-                        if let toneSummary = hit.toneSummary {
-                            Text(toneSummary)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text(hit.detectedAt, style: .time)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                        Text(hit.detectedAt, style: .time)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                     Spacer()
                 }
@@ -671,8 +623,6 @@ struct AdvancedFrequencyScanView: View {
         }
         scanNotice = nil
         scanStore.setMonitoringMHz(hit.frequencyMHz)
-        currentReceiveTone = hit.rxSubAudio
-        currentTransmitTone = hit.txSubAudio
         operation = .held(direction: operation.direction)
         applyFrequencyMode(.exact)
         startHeldMonitoring(direction: operation.direction)
@@ -707,11 +657,7 @@ struct AdvancedFrequencyScanView: View {
             if hasReachedScanBoundary(status, direction: direction) {
                 updateLiveStatus(status)
                 if status.isTuned {
-                    scanStore.recordHit(
-                        frequencyMHz: status.rxMHz,
-                        rxSubAudio: status.rxSubAudio,
-                        txSubAudio: status.txSubAudio
-                    )
+                    scanStore.recordHit(frequencyMHz: status.rxMHz)
                 }
                 try await stopAtScanBoundary(direction: direction)
                 continue
@@ -720,11 +666,7 @@ struct AdvancedFrequencyScanView: View {
             updateLiveStatus(status)
 
             if status.isTuned {
-                scanStore.recordHit(
-                    frequencyMHz: status.rxMHz,
-                    rxSubAudio: status.rxSubAudio,
-                    txSubAudio: status.txSubAudio
-                )
+                scanStore.recordHit(frequencyMHz: status.rxMHz)
             }
 
             guard status.mode == mode else {
@@ -773,11 +715,7 @@ struct AdvancedFrequencyScanView: View {
             updateLiveStatus(status)
 
             if status.isTuned {
-                scanStore.recordHit(
-                    frequencyMHz: status.rxMHz,
-                    rxSubAudio: status.rxSubAudio,
-                    txSubAudio: status.txSubAudio
-                )
+                scanStore.recordHit(frequencyMHz: status.rxMHz)
             }
 
             if status.mode == .off {
@@ -999,12 +937,6 @@ private struct ScanHitSaveSheet: View {
                         Text(String(format: "%.4f MHz", hit.frequencyMHz))
                             .monospacedDigit()
                     }
-                    if let rxSubAudio = hit.rxSubAudio {
-                        LabeledContent("Receive Tone", value: rxSubAudio.scanToneLabel)
-                    }
-                    if let txSubAudio = hit.txSubAudio {
-                        LabeledContent("Transmit Tone", value: txSubAudio.scanToneLabel)
-                    }
                 }
 
                 Section("Save To") {
@@ -1119,7 +1051,7 @@ private struct ScanHitSaveSheet: View {
             do {
                 try await radioManager.saveScanHit(
                     frequencyMHz: hit.frequencyMHz,
-                    rxSubAudio: hit.rxSubAudio,
+                    rxSubAudio: nil,
                     inRegion: groupIndex,
                     slot: slot
                 )
