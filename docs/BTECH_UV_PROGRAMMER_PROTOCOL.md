@@ -264,9 +264,12 @@ writes a new VFO channel for every step.
    (`/tmp/btech-jadx/sources/s4/g3.java:448-473`, `:1105-1108`).
 6. While scanning, a `tuned` status stores/updates the result. When the
    `freq_scan_auto_scan` preference is true, the app submits the next command-35
-   parameter to continue. It also auto-continues when no tune occurred and the
-   frequency did not change (`/tmp/btech-jadx/sources/s4/g3.java:1109-1128`;
-   next-step helper at `:587-596`).
+   parameter to continue. With auto-scan disabled, it intentionally sends no
+   follow-up command: the radio stays in its existing `MODE_UP` or `MODE_DOWN`
+   state with `tuned=true`, so reception and live status monitoring continue.
+   It also auto-continues when no tune occurred and the frequency did not
+   change (`/tmp/btech-jadx/sources/s4/g3.java:1109-1128`; next-step helper at
+   `:587-596`).
 
 This explains the required FieldHT behavior: scan should issue command 35 in
 `UP`, `DOWN`, `EXACT`, and `OFF` modes, honor the radio-reported status,
@@ -288,6 +291,15 @@ When the frequency-scan status notification is not supported, the base link
 polls command 36 on a schedule: 100 ms during seek-up/seek-down, 500 ms for
 other active modes, and 5 seconds while off
 (`/tmp/btech-jadx/sources/v4/l1.java:319-323`, `:390-424`).
+
+The command-36 status carries distinct RX and TX sub-audio fields, so an app
+can show the detected CTCSS/DCS values while a frequency is held
+(`/tmp/btech-jadx/sources/y4/b.java:231`; stock layout
+`/tmp/btech-jadx/resources/res/layout/fragment_freq_scan.xml:108`). The mode
+enum also declares `MODE_TONE_SCAN = 7`, but this XAPK has no functional call
+site or capability gate for it; do not expose tone scanning as a working radio
+feature until it has been verified against a physical UV-PRO
+(`/tmp/btech-jadx/sources/y4/c.java:6`, `/tmp/btech-jadx/sources/y4/a.java:61`).
 
 Registration and cancellation are batched only when the batch-registration
 capability is present; otherwise the app sends one command per notification

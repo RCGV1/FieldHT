@@ -183,12 +183,20 @@ struct AdvancedFrequencyScanView: View {
     @StateObject private var scanStore = AdvancedFrequencyScanStore()
     @State private var operation: ScanOperationState = .idle
     @State private var scanMonitoringTask: Task<Void, Never>?
+    @State private var heldMonitoringTask: Task<Void, Never>?
     @State private var scanError: String?
+    @State private var currentReceiveTone: SubAudio?
+    @State private var currentTransmitTone: SubAudio?
     @State private var isShowingSetup = false
     @State private var hitToSave: AdvancedFrequencyScanStore.ScanHit?
 
     private var isScanning: Bool {
         if case .scanning = operation { return true }
+        return false
+    }
+
+    private var isHeld: Bool {
+        if case .held = operation { return true }
         return false
     }
 
@@ -261,6 +269,20 @@ struct AdvancedFrequencyScanView: View {
                     Text(stepLabel(scanStore.scanStepKHz))
                         .font(.subheadline.monospacedDigit())
                         .foregroundStyle(.secondary)
+                }
+
+                if isScanning || isHeld {
+                    LabeledContent("RX Tone") {
+                        Text(currentReceiveTone?.scanToneLabel ?? "None")
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+
+                    LabeledContent("TX Tone") {
+                        Text(currentTransmitTone?.scanToneLabel ?? "None")
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .padding(.vertical, 8)
@@ -451,7 +473,7 @@ struct AdvancedFrequencyScanView: View {
         switch operation {
         case .idle: "dot.radiowaves.left.and.right"
         case .scanning: "wave.3.right"
-        case .held: "pause.circle.fill"
+        case .held: "antenna.radiowaves.left.and.right"
         }
     }
 
@@ -467,6 +489,8 @@ struct AdvancedFrequencyScanView: View {
 
         scanError = nil
         scanMonitoringTask?.cancel()
+        heldMonitoringTask?.cancel()
+        heldMonitoringTask = nil
         operation = .scanning(direction: direction)
         let mode: FrequencyMode = direction > 0 ? .scanUp : .scanDown
 
@@ -492,7 +516,8 @@ struct AdvancedFrequencyScanView: View {
         scanMonitoringTask?.cancel()
         scanMonitoringTask = nil
         operation = .held(direction: direction)
-        applyFrequencyMode(.off)
+        applyFrequencyMode(.exact)
+        startHeldMonitoring(direction: direction)
     }
 
     private func resumeScan() {
@@ -507,6 +532,8 @@ struct AdvancedFrequencyScanView: View {
     private func stopScan() {
         scanMonitoringTask?.cancel()
         scanMonitoringTask = nil
+        heldMonitoringTask?.cancel()
+        heldMonitoringTask = nil
         operation = .idle
         guard radioManager.isConnected else { return }
         applyFrequencyMode(.off)
@@ -514,20 +541,24 @@ struct AdvancedFrequencyScanView: View {
 
     private func fineTune(direction: Int) {
         if isScanning {
-            holdScan()
+            scanMonitoringTask?.cancel()
+            scanMonitoringTask = nil
         }
         scanStore.move(direction: direction, usingFineTuning: true)
         operation = .held(direction: operation.direction)
         applyFrequencyMode(.exact)
+        startHeldMonitoring(direction: operation.direction)
     }
 
     private func tuneExactly(_ frequencyMHz: Double) {
         if isScanning {
-            holdScan()
+            scanMonitoringTask?.cancel()
+            scanMonitoringTask = nil
         }
         scanStore.setCurrentMHz(frequencyMHz)
         operation = .held(direction: operation.direction)
         applyFrequencyMode(.exact)
+        startHeldMonitoring(direction: operation.direction)
     }
 
     private func applyFrequencyMode(_ mode: FrequencyMode) {
@@ -560,7 +591,7 @@ struct AdvancedFrequencyScanView: View {
                 continue
             }
 
-            scanStore.setCurrentMHz(status.rxMHz)
+            updateLiveStatus(status)
 
             if status.isTuned {
                 scanStore.recordHit(
@@ -583,10 +614,53 @@ struct AdvancedFrequencyScanView: View {
             } else {
                 operation = .held(direction: direction)
                 scanMonitoringTask = nil
-                try await sendFrequencyMode(.off)
+                startHeldMonitoring(direction: direction)
                 return
             }
         }
+    }
+
+    private func startHeldMonitoring(direction: Int) {
+        heldMonitoringTask?.cancel()
+        heldMonitoringTask = Task { @MainActor in
+            do {
+                try await monitorHeldFrequency(direction: direction)
+            } catch is CancellationError {
+                return
+            } catch {
+                if !Task.isCancelled {
+                    heldMonitoringTask = nil
+                    scanError = "Unable to monitor held frequency: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func monitorHeldFrequency(direction: Int) async throws {
+        while !Task.isCancelled && isHeld {
+            try await Task.sleep(nanoseconds: 500_000_000)
+            let status = try await radioManager.getFrequencyScanStatus()
+            updateLiveStatus(status)
+
+            if status.isTuned {
+                scanStore.recordHit(
+                    frequencyMHz: status.rxMHz,
+                    rxSubAudio: status.rxSubAudio
+                )
+            }
+
+            if status.mode == .off {
+                operation = .idle
+                heldMonitoringTask = nil
+                return
+            }
+        }
+    }
+
+    private func updateLiveStatus(_ status: FrequencyModeStatus) {
+        scanStore.setCurrentMHz(status.rxMHz)
+        currentReceiveTone = status.rxSubAudio
+        currentTransmitTone = status.txSubAudio
     }
 
     private func stepLabel(_ value: Double) -> String {

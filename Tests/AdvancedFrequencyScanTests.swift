@@ -49,6 +49,12 @@ enum AdvancedFrequencyScanTests {
             expect(scan.contains("onDelete"), "recent scan hits must support swipe deletion")
             expect(scan.contains("ScanHitSaveSheet"), "scan hits must open a memory-slot save sheet")
             expect(scan.contains("if case .held = operation"), "fine tuning must only appear while the scan is held")
+            expect(scan.contains("startHeldMonitoring(direction: direction)"), "a signal-held scan must keep monitoring instead of turning the radio scan mode off")
+            expect(scan.contains("private func monitorHeldFrequency"), "a signal-held scan must continue reading the radio's live frequency status")
+            expect(scan.contains("currentReceiveTone"), "active scanning must retain the live received CTCSS or DCS value")
+            expect(scan.contains("currentTransmitTone"), "active scanning must retain the live transmit CTCSS or DCS value")
+            expect(scan.contains("RX Tone"), "active scanning must display the live received CTCSS or DCS value")
+            expect(scan.contains("TX Tone"), "active scanning must display the live transmit CTCSS or DCS value")
         }
 
         let settings = try String(contentsOf: settingsURL, encoding: .utf8)
