@@ -229,33 +229,36 @@ public struct ProtocolEncoder {
         return stream.toData()
     }
 
-    // MARK: - Frequency/Satellite Mode (Reverse-engineered)
+    // MARK: - Frequency/Satellite Mode
 
-    /// Encodes `freqModeSetPar` (basic cmd 35) as seen in BLE logs.
-    /// Layout (big-endian):
-    /// - UInt32 rxFreqHz
-    /// - UInt32 txFreqHz
-    /// - UInt32 subAudioWord = (UInt16 rxSubAudio << 16) | UInt16 txSubAudio
-    /// - UInt16 reserved1 (observed 0x0A00)
-    /// - UInt16 reserved2 (observed 0x61A8)
+    /// Encodes `freqModeSetPar` (basic cmd 35).
+    ///
+    /// The stock BTECH app packs this bitfield for both frequency scanning and
+    /// satellite mode. In particular, the `mode` nibble must be explicit: the
+    /// former 0x0A00 constant selected satellite mode for every caller.
     public static func encodeFreqModeSetPar(
         rxFreqHzX: UInt32,
         txFreqHzX: UInt32,
         rxSubAudio: SubAudio? = nil,
         txSubAudio: SubAudio? = nil,
-        reserved1: UInt16 = 0x0A00,
-        reserved2: UInt16 = 0x61A8
+        mode: FrequencyMode,
+        step: FrequencyScanStep = .fiveKHz,
+        extendedParameter: UInt16 = 0
     ) -> Data {
-        var data = Data()
-        data.appendUInt32BE(rxFreqHzX)
-        data.appendUInt32BE(txFreqHzX)
-        let rx = encodeSubAudioValue(rxSubAudio)
-        let tx = encodeSubAudioValue(txSubAudio)
-        let subAudioWord = (UInt32(rx) << 16) | UInt32(tx)
-        data.appendUInt32BE(subAudioWord)
-        data.appendUInt16BE(reserved1)
-        data.appendUInt16BE(reserved2)
-        return data
+        var stream = BitStream()
+        stream.writeInt(0, bitCount: 2) // FM modulation
+        stream.writeInt(clampUInt30(Int(rxFreqHzX)), bitCount: 30)
+        stream.writeInt(0, bitCount: 2) // FM modulation
+        stream.writeInt(clampUInt30(Int(txFreqHzX)), bitCount: 30)
+        stream.writeInt(Int(encodeSubAudioValue(rxSubAudio)), bitCount: 16)
+        stream.writeInt(Int(encodeSubAudioValue(txSubAudio)), bitCount: 16)
+        stream.writeBool(false) // low TX power
+        stream.writeInt(step.rawValue, bitCount: 3)
+        stream.writeInt(mode.rawValue, bitCount: 4)
+        stream.writeInt(0, bitCount: 6) // reserved
+        stream.writeInt(0, bitCount: 2) // frequency-difference mode: no change
+        stream.writeInt(Int(extendedParameter), bitCount: 16)
+        return stream.toData()
     }
 
     /// Encodes a satellite info payload (basic cmd 77) as seen in BLE logs.

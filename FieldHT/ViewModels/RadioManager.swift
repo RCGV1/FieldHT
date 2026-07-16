@@ -1108,25 +1108,66 @@ public class RadioManager: ObservableObject {
         return radioController?.channelsForCurrentRegion.first(where: { $0.channelID == 251 })
     }
     
-    /// Set frequency for VFO
-    public func setFrequency(_ frequency: Double, for channel: ChannelType) {
-        guard let controller = radioController else { return }
-        
+    /// Selects a VFO and tunes it directly.
+    public func tuneVFO(_ frequency: Double, for channel: ChannelType) async throws {
+        guard let controller = radioController, channel != .off else {
+            throw BLEError.notConnected
+        }
+
         let vfoID = channel == .a ? 252 : 251
-        print("RadioManager: Setting VFO Freq \(frequency) MHz for channel ID \(vfoID)")
-        
         isBusy = true
+        defer { isBusy = false }
+
+        var settings = try await controller.refreshSettings()
+        switch channel {
+        case .a:
+            if settings.channelA < 250 {
+                lastMemoryChannelAIndex = settings.channelA
+            }
+            settings.channelA = vfoID
+        case .b:
+            if settings.channelB < 250 {
+                lastMemoryChannelBIndex = settings.channelB
+            }
+            settings.channelB = vfoID
+        case .off:
+            throw BLEError.notConnected
+        }
+
+        try await controller.setSettings(settings)
+        try await controller.setChannel(vfoID, txFreq: frequency, rxFreq: frequency)
+    }
+
+    /// Set frequency for VFO without requiring callers to manage an asynchronous task.
+    public func setFrequency(_ frequency: Double, for channel: ChannelType) {
         Task {
             do {
-                try await controller.setChannel(vfoID, txFreq: frequency, rxFreq: frequency)
-                print("RadioManager: VFO Frequency set successfully")
-                isBusy = false
+                try await tuneVFO(frequency, for: channel)
             } catch {
                 print("Failed to set VFO frequency: \(error)")
                 errorMessage = "Failed to set VFO frequency: \(error.localizedDescription)"
-                isBusy = false
             }
         }
+    }
+
+    public func setFrequencyScan(
+        frequencyMHz: Double,
+        mode: FrequencyMode,
+        stepKHz: Double
+    ) async throws {
+        guard let controller = radioController else { throw BLEError.notConnected }
+        isBusy = true
+        defer { isBusy = false }
+        try await controller.setFrequencyScan(
+            frequencyMHz: frequencyMHz,
+            mode: mode,
+            step: FrequencyScanStep(kHz: stepKHz)
+        )
+    }
+
+    public func getFrequencyScanStatus() async throws -> FrequencyModeStatus {
+        guard let controller = radioController else { throw BLEError.notConnected }
+        return try await controller.getFrequencyScanStatus()
     }
 
     public func setSplitFrequency(rxMHz: Double, txMHz: Double, for channel: ChannelType) {

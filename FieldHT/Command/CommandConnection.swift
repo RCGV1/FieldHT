@@ -265,13 +265,19 @@ public class CommandConnection: BLEConnectionDelegate {
         rxFreqHzX: UInt32,
         txFreqHzX: UInt32,
         rxSubAudio: SubAudio? = nil,
-        txSubAudio: SubAudio? = nil
+        txSubAudio: SubAudio? = nil,
+        mode: FrequencyMode,
+        step: FrequencyScanStep = .fiveKHz,
+        extendedParameter: UInt16 = 0
     ) async throws {
         let body = ProtocolEncoder.encodeFreqModeSetPar(
             rxFreqHzX: rxFreqHzX,
             txFreqHzX: txFreqHzX,
             rxSubAudio: rxSubAudio,
-            txSubAudio: txSubAudio
+            txSubAudio: txSubAudio,
+            mode: mode,
+            step: step,
+            extendedParameter: extendedParameter
         )
         let data = ProtocolEncoder.encodeMessage(
             commandGroup: .basic,
@@ -281,14 +287,16 @@ public class CommandConnection: BLEConnectionDelegate {
         try await sendBytes(data)
     }
 
-    public func getFreqModeStatus() async throws {
-        // This command appears to be effectful on some firmware (it influences subsequent sat-mode writes),
-        // so wait for its reply to keep command sequencing stable.
-        _ = try await sendCommandAndWaitForReply(
+    public func getFreqModeStatus() async throws -> FrequencyModeStatus {
+        let reply = try await sendCommandAndWaitForReply(
             commandGroup: .basic,
             command: BasicCommand.freqModeGetStatus.rawValue,
             body: Data()
         )
+        guard case .reply(.frequencyModeStatus(let status)) = reply else {
+            throw ProtocolError.invalidReply
+        }
+        return status
     }
 
     public func setSatModeInfo(
@@ -330,9 +338,11 @@ public class CommandConnection: BLEConnectionDelegate {
     private func decodeReply(message: ProtocolMessage) throws -> ReplyMessage {
         switch (message.commandGroup, message.command) {
         case (.basic, BasicCommand.freqModeGetStatus.rawValue):
-            // Reverse-engineered command 36 (freqModeGetStatus). We don't currently parse it,
-            // but callers may wait for the reply to enforce BLE command sequencing.
-            return .success
+            let replyStatus = try decodeReplyStatus(message.body)
+            guard replyStatus == .success else {
+                return .error(replyStatus, "Failed to get frequency mode status")
+            }
+            return .frequencyModeStatus(try ProtocolDecoder.decodeFrequencyModeStatus(Data(message.body.dropFirst(1))))
 
         case (.basic, BasicCommand.freqModeSetPar.rawValue):
             // Reverse-engineered command 35 (freqModeSetPar). Treat reply as ack.

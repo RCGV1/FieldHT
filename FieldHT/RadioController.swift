@@ -577,7 +577,7 @@ public class RadioController: ObservableObject {
         try await connection.executePFAction(12)
     }
 
-    // MARK: - Satellite mode (reverse-engineered)
+    // MARK: - Frequency mode
 
     public func setFreqModeParameters(
         rxMHz: Double,
@@ -591,9 +591,28 @@ public class RadioController: ObservableObject {
             rxFreqHzX: rxHzX,
             txFreqHzX: txHzX,
             rxSubAudio: rxSubAudio,
-            txSubAudio: txSubAudio
+            txSubAudio: txSubAudio,
+            mode: .satellite,
+            extendedParameter: 0x61A8
         )
-        // Observed in BLE logs: firmware expects a follow-up status read (cmd 36).
+        _ = try await connection.getFreqModeStatus()
+    }
+
+    public func setFrequencyScan(
+        frequencyMHz: Double,
+        mode: FrequencyMode,
+        step: FrequencyScanStep
+    ) async throws {
+        let frequencyHz = UInt32(max(0, Int((frequencyMHz * 1_000_000.0).rounded())))
+        try await connection.setFreqModeParameters(
+            rxFreqHzX: frequencyHz,
+            txFreqHzX: frequencyHz,
+            mode: mode,
+            step: step
+        )
+    }
+
+    public func getFrequencyScanStatus() async throws -> FrequencyModeStatus {
         try await connection.getFreqModeStatus()
     }
 

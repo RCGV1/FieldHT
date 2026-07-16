@@ -212,6 +212,32 @@ public struct ProtocolDecoder {
             currChIDLower: currChIDLower
         )
     }
+
+    // MARK: - Frequency Mode Status
+
+    public static func decodeFrequencyModeStatus(_ data: Data) throws -> FrequencyModeStatus {
+        var stream = BitStream(data: data)
+        _ = try stream.readInt(2) // RX modulation; FieldHT currently exposes FM scan only.
+        let rxHz = try stream.readInt(30)
+        _ = try stream.readInt(2) // TX modulation
+        let txHz = try stream.readInt(30)
+        _ = try stream.readInt(16) // RX CTCSS/DCS
+        _ = try stream.readInt(16) // TX CTCSS/DCS
+        _ = try stream.readBool() // TX power
+        let stepRaw = try stream.readInt(3)
+        let modeRaw = try stream.readInt(4)
+        let isTuned = try stream.readBool()
+        let isSeeking = try stream.readBool()
+
+        return FrequencyModeStatus(
+            rxMHz: Double(rxHz) / 1_000_000,
+            txMHz: Double(txHz) / 1_000_000,
+            step: FrequencyScanStep(rawValue: stepRaw) ?? .twentyFiveKHz,
+            mode: FrequencyMode(rawValue: modeRaw),
+            isTuned: isTuned,
+            isSeeking: isSeeking
+        )
+    }
     
     // MARK: - Settings Decoding
     
