@@ -25,6 +25,8 @@ public enum PacketFormat: String, Codable, CaseIterable {
 
 /// Beacon settings
 public struct BeaconSettings: Codable, Equatable {
+    // Retained from the radio so writes preserve bits FieldHT does not model yet.
+    var rawProtocolPayload: Data?
     public var maxFwdTimes: Int
     public var timeToLive: Int
     public var pttReleaseSendLocation: Bool
@@ -70,6 +72,7 @@ public struct BeaconSettings: Codable, Equatable {
         smartBeaconMinimumInterval: Int? = nil,
         smartBeaconMaximumInterval: Int? = nil
     ) {
+        self.rawProtocolPayload = nil
         self.maxFwdTimes = maxFwdTimes
         self.timeToLive = timeToLive
         self.pttReleaseSendLocation = pttReleaseSendLocation

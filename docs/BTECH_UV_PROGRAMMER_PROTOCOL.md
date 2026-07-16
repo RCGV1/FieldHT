@@ -404,6 +404,8 @@ in FieldHT.
   APRS path read/write, packet beaconing, Mic-E, APRS ID sending, and smart
   beacon settings. Firmware gates now match the stock app: APRS path 86,
   Mic-E 135, APRS ID 138, and extended smart-beacon intervals 146.
+- Packet-beacon writes retain the radio's raw BSS payload and overwrite only
+  fields FieldHT models, preserving reserved bits and future-firmware tails.
 
 ### Intentionally deferred pending hardware evidence
 

@@ -545,7 +545,7 @@ public struct ProtocolDecoder {
         
         let bssUserID = (bssUserIDUpper << 32) | bssUserIDLower
         
-        return BeaconSettings(
+        var settings = BeaconSettings(
             maxFwdTimes: maxFwdTimes,
             timeToLive: timeToLive,
             pttReleaseSendLocation: pttReleaseSendLocation,
@@ -568,6 +568,8 @@ public struct ProtocolDecoder {
             smartBeaconMinimumInterval: smartBeaconMinimumInterval,
             smartBeaconMaximumInterval: smartBeaconMaximumInterval
         )
+        settings.rawProtocolPayload = data
+        return settings
     }
     
     // MARK: - Region Decoding

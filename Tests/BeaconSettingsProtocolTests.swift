@@ -57,6 +57,22 @@ enum BeaconSettingsProtocolTests {
             fputs("FAIL: extended beacon settings should decode: \(error)\n", stderr)
         }
 
+        var payloadWithReservedBits = extendedData
+        payloadWithReservedBits[1] |= 0x01 // protocol bit 15
+        payloadWithReservedBits[2] |= 0x01 // protocol bit 23
+        payloadWithReservedBits[51] |= 0x40 // extended reserved bit 409
+        do {
+            var decoded = try ProtocolDecoder.decodeBeaconSettings(payloadWithReservedBits)
+            decoded.beaconMessage = "Updated"
+            let rewritten = ProtocolEncoder.encodeBeaconSettings(decoded)
+            expectEqual(rewritten[1] & 0x01, 0x01, "base reserved bits survive a beacon settings update")
+            expectEqual(rewritten[2] & 0x01, 0x01, "packet-format reserved bits survive a beacon settings update")
+            expectEqual(rewritten[51] & 0x40, 0x40, "extended reserved bits survive a beacon settings update")
+        } catch {
+            failures += 1
+            fputs("FAIL: beacon payload with reserved bits should decode: \(error)\n", stderr)
+        }
+
         let legacy = BeaconSettings(
             maxFwdTimes: 0,
             timeToLive: 0,

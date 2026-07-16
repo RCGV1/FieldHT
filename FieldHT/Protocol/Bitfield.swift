@@ -63,6 +63,15 @@ public struct BitStream {
     public mutating func writeBits(_ bits: [Bool]) {
         self.bits.append(contentsOf: bits)
     }
+
+    @discardableResult
+    public mutating func replaceBits(_ replacement: [Bool], at offset: Int) -> Bool {
+        guard offset >= 0, offset + replacement.count <= bits.count else {
+            return false
+        }
+        bits.replaceSubrange(offset..<(offset + replacement.count), with: replacement)
+        return true
+    }
     
     public mutating func writeInt(_ value: Int, bitCount: Int) {
         var bits: [Bool] = []
@@ -106,4 +115,3 @@ public enum BitfieldError: Error {
     case invalidValue
     case decodeError(String)
 }
-

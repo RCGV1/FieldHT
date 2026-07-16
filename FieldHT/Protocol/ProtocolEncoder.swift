@@ -333,6 +333,18 @@ public struct ProtocolEncoder {
     // MARK: - Beacon Settings Encoding
     
     public static func encodeBeaconSettings(_ settings: BeaconSettings) -> Data {
+        let canonicalPayload = encodeCanonicalBeaconSettings(settings)
+        guard let rawPayload = settings.rawProtocolPayload, rawPayload.count >= 50 else {
+            return canonicalPayload
+        }
+
+        return mergeBeaconSettings(
+            canonicalPayload,
+            preservingUnknownBitsFrom: rawPayload
+        )
+    }
+
+    private static func encodeCanonicalBeaconSettings(_ settings: BeaconSettings) -> Data {
         var stream = BitStream()
         
         stream.writeInt(settings.maxFwdTimes, bitCount: 4)
@@ -404,6 +416,36 @@ public struct ProtocolEncoder {
         }
         
         return stream.toData()
+    }
+
+    /// BSS payloads grow across firmware revisions. Preserve the radio's
+    /// unmodeled padding, reserved fields, and any trailing extension bytes.
+    private static func mergeBeaconSettings(
+        _ canonicalPayload: Data,
+        preservingUnknownBitsFrom rawPayload: Data
+    ) -> Data {
+        var canonicalStream = BitStream(data: canonicalPayload)
+        guard let canonicalBits = try? canonicalStream.readBits(canonicalPayload.count * 8) else {
+            return canonicalPayload
+        }
+
+        var mergedStream = BitStream(data: rawPayload)
+        let baseKnownRanges = [0..<15, 16..<23, 24..<400]
+        for range in baseKnownRanges {
+            guard range.upperBound <= canonicalBits.count,
+                  mergedStream.replaceBits(Array(canonicalBits[range]), at: range.lowerBound) else {
+                return canonicalPayload
+            }
+        }
+
+        // The final seven bits of the 52-byte layout remain reserved.
+        if canonicalPayload.count >= 52, rawPayload.count >= 52 {
+            guard mergedStream.replaceBits(Array(canonicalBits[400..<409]), at: 400) else {
+                return canonicalPayload
+            }
+        }
+
+        return mergedStream.toData()
     }
     
     // MARK: - Region Encoding
