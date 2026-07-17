@@ -433,6 +433,42 @@ public class SettingsViewModel: ObservableObject {
         updateSettings(current)
     }
 
+    public func updateTimeOffset(_ value: Int) {
+        guard var current = settings else { return }
+        current.timeOffset = value & 0x3F
+        updateSettings(current)
+    }
+
+    public func updateVoxEnabled(_ value: Bool) {
+        guard var current = settings else { return }
+        current.voxEnabled = value
+        updateSettings(current)
+    }
+
+    public func updateVoxLevel(_ value: Int) {
+        guard var current = settings else { return }
+        current.voxLevel = min(max(value, 0), 7)
+        updateSettings(current)
+    }
+
+    public func updateDisableBluetoothMic(_ value: Bool) {
+        guard var current = settings else { return }
+        current.disableBluetoothMic = value
+        updateSettings(current)
+    }
+
+    public func updateVoxDelay(_ value: Int) {
+        guard var current = settings else { return }
+        current.voxDelay = min(max(value, 0), 7)
+        updateSettings(current)
+    }
+
+    public func updateNoiseSuppressionEnabled(_ value: Bool) {
+        guard var current = settings else { return }
+        current.noiseSuppressionEnabled = value
+        updateSettings(current)
+    }
+
     /// Load PF configuration from the radio
     public func loadPFConfig() {
         guard let radioController = radioController else {

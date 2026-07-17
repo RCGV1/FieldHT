@@ -80,6 +80,8 @@ struct APRSIGateSettingsView: View {
             }
         }
         .navigationTitle("APRS Internet Gateway")
+        .scrollDismissesKeyboard(.interactively)
+        .fieldHTKeyboardDismissal()
         .onAppear {
             if settingsStore.configuration.callsign.isEmpty {
                 Task {

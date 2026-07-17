@@ -83,6 +83,8 @@ struct VFOEditSheet: View {
                 }
             }
             .navigationTitle("VFO Config")
+            .scrollDismissesKeyboard(.interactively)
+            .fieldHTKeyboardDismissal()
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

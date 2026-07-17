@@ -893,6 +893,8 @@ private struct AdvancedScanSetupView: View {
                 }
             }
             .navigationTitle("Scan Setup")
+            .scrollDismissesKeyboard(.interactively)
+            .fieldHTKeyboardDismissal()
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
@@ -978,6 +980,8 @@ private struct ScanHitSaveSheet: View {
                 }
             }
             .navigationTitle("Save Scan Hit")
+            .scrollDismissesKeyboard(.interactively)
+            .fieldHTKeyboardDismissal()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

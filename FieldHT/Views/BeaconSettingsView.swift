@@ -37,11 +37,10 @@ struct BeaconSettingsView: View {
     @State private var micEEnabled: Bool = false
     @State private var sendIDByAPRS: Bool = false
     
-    @State private var locationShareInterval: Int = 0
+    @State private var locationShareInterval: Int = BeaconTimingPolicy.defaultInterval
     @State private var timeToLive: Int = 0
     @State private var maxFwdTimes: Int = 0
     @State private var smartBeaconEnabled: Bool = false
-    @State private var smartBeaconMinimumInterval: Int = 0
     @State private var smartBeaconMaximumInterval: Int = 0
     @State private var supportsSmartBeaconIntervals = false
 
@@ -178,37 +177,43 @@ struct BeaconSettingsView: View {
                     }
                 }
                 
-                Section(header: Text("Location Beaconing"), footer: Text("The radio stores the sharing interval in 10-second steps.")) {
+                Section(header: Text("Location Beaconing"), footer: Text(locationBeaconingFooter)) {
                     Toggle("Share Location", isOn: $shouldShareLocation)
 
                     TextField("Beacon Message", text: $beaconMessage)
                     
-                    HStack {
-                        Text("Sharing Interval (s)")
-                        Spacer()
-                        TextField("Seconds", value: $locationShareInterval, format: .number)
-                            .keyboardType(.numberPad)
-                            .multilineTextAlignment(.trailing)
+                    Picker(smartBeaconEnabled ? "Minimum Interval" : "Beacon Interval", selection: $locationShareInterval) {
+                        ForEach(BeaconTimingPolicy.baseIntervals, id: \.self) { interval in
+                            Text(BeaconTimingPolicy.label(for: interval)).tag(interval)
+                        }
                     }
+                    .disabled(!shouldShareLocation && !smartBeaconEnabled)
 
                     Toggle("Allow Position Check", isOn: $allowPositionCheck)
                     Toggle("Send Power / Voltage", isOn: $sendPwrVoltage)
                 }
 
                 if packetFormat == .aprs {
-                    Section(header: Text("Smart Beaconing"), footer: Text("The radio adjusts beacon timing based on movement. Minimum and maximum intervals are in minutes.")) {
-                        Toggle("Enable Smart Beacon", isOn: $smartBeaconEnabled)
-
-                        if supportsSmartBeaconIntervals {
-                            Picker("Minimum Interval", selection: $smartBeaconMinimumInterval) {
-                                ForEach(0...15, id: \.self) { value in
-                                    Text(value == 0 ? "Use share interval" : "\(value) minutes").tag(value)
+                    Section(header: Text("Smart Beaconing"), footer: Text(smartBeaconFooter)) {
+                        Toggle("Enable Smart Beacon", isOn: Binding(
+                            get: { smartBeaconEnabled },
+                            set: { enabled in
+                                smartBeaconEnabled = enabled
+                                if enabled {
+                                    shouldShareLocation = true
+                                    locationShareInterval = BeaconTimingPolicy.normalizedBaseInterval(
+                                        locationShareInterval,
+                                        isBeaconingEnabled: true
+                                    )
                                 }
                             }
+                        ))
 
+                        if supportsSmartBeaconIntervals {
                             Picker("Maximum Interval", selection: $smartBeaconMaximumInterval) {
-                                ForEach(0...30, id: \.self) { value in
-                                    Text(value == 0 ? "Use radio default" : "\(value) minutes").tag(value)
+                                ForEach(BeaconTimingPolicy.smartBeaconMaximumIntervals, id: \.self) { value in
+                                    let unit = value == 1 ? "minute" : "minutes"
+                                    Text("\(value) \(unit)").tag(value)
                                 }
                             }
                         }
@@ -248,6 +253,8 @@ struct BeaconSettingsView: View {
             }
         }
         .navigationTitle("APRS / Packet Beaconing")
+        .scrollDismissesKeyboard(.interactively)
+        .fieldHTKeyboardDismissal()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 if isSaving {
@@ -302,15 +309,16 @@ struct BeaconSettingsView: View {
                 self.allowPositionCheck = currentSettings.allowPositionCheck
                 self.micEEnabled = currentSettings.micEEnabled
                 self.sendIDByAPRS = currentSettings.sendIDByAPRS
-                self.locationShareInterval = currentSettings.locationShareInterval
+                self.locationShareInterval = BeaconTimingPolicy.normalizedBaseInterval(
+                    currentSettings.locationShareInterval,
+                    isBeaconingEnabled: currentSettings.shouldShareLocation || currentSettings.smartBeaconEnabled
+                )
                 self.timeToLive = currentSettings.timeToLive
                 self.maxFwdTimes = currentSettings.maxFwdTimes
                 self.smartBeaconEnabled = currentSettings.smartBeaconEnabled
                 if supportsExtendedSmartBeaconing,
-                   let minimum = currentSettings.smartBeaconMinimumInterval,
                    let maximum = currentSettings.smartBeaconMaximumInterval {
-                    self.smartBeaconMinimumInterval = minimum
-                    self.smartBeaconMaximumInterval = maximum
+                    self.smartBeaconMaximumInterval = BeaconTimingPolicy.normalizedMaximumInterval(maximum)
                     self.supportsSmartBeaconIntervals = true
                 } else {
                     self.supportsSmartBeaconIntervals = false
@@ -345,7 +353,8 @@ struct BeaconSettingsView: View {
         updatedSettings.aprsSymbol = aprsSymbol
         updatedSettings.beaconMessage = beaconMessage
         
-        updatedSettings.shouldShareLocation = shouldShareLocation
+        let beaconingEnabled = shouldShareLocation || smartBeaconEnabled
+        updatedSettings.shouldShareLocation = beaconingEnabled
         updatedSettings.pttReleaseSendLocation = pttReleaseSendLocation
         updatedSettings.pttReleaseSendIDInfo = pttReleaseSendIDInfo
         updatedSettings.pttReleaseSendBSSUserID = pttReleaseSendBSSUserID
@@ -354,13 +363,15 @@ struct BeaconSettingsView: View {
         updatedSettings.micEEnabled = micEEnabled
         updatedSettings.sendIDByAPRS = sendIDByAPRS
         
-        updatedSettings.locationShareInterval = locationShareInterval
+        updatedSettings.locationShareInterval = BeaconTimingPolicy.normalizedBaseInterval(
+            locationShareInterval,
+            isBeaconingEnabled: beaconingEnabled
+        )
         updatedSettings.timeToLive = timeToLive
         updatedSettings.maxFwdTimes = maxFwdTimes
         updatedSettings.smartBeaconEnabled = smartBeaconEnabled
         if supportsSmartBeaconIntervals {
-            updatedSettings.smartBeaconMinimumInterval = smartBeaconMinimumInterval
-            updatedSettings.smartBeaconMaximumInterval = smartBeaconMaximumInterval
+            updatedSettings.smartBeaconMaximumInterval = BeaconTimingPolicy.normalizedMaximumInterval(smartBeaconMaximumInterval)
         }
         
         Task {
@@ -379,9 +390,24 @@ struct BeaconSettingsView: View {
                 isSaving = false
             } catch {
                 print("Error saving beacon settings: \(error)")
+                self.loadError = error.localizedDescription
                 isSaving = false
             }
         }
+    }
+
+    private var locationBeaconingFooter: String {
+        if smartBeaconEnabled {
+            return "Smart Beacon uses this value as its minimum interval. The radio stores it in 10-second steps."
+        }
+        return "Choose a fixed interval. Turning location sharing on never writes a zero-second interval."
+    }
+
+    private var smartBeaconFooter: String {
+        if supportsSmartBeaconIntervals {
+            return "Smart Beacon adjusts timing based on movement. Minimum Interval is set in Location Beaconing; maximum is stored separately by the radio."
+        }
+        return "This firmware supports Smart Beacon on/off but does not report a separate maximum interval."
     }
 
     private let commonAPRSPaths = [

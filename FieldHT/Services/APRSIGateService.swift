@@ -60,6 +60,7 @@ public final class APRSIGateService: ObservableObject {
     private var packetAssembler = TncPacketAssembler()
     private var receiveBuffer = Data()
     private var recentlyHandledPackets: [String: Date] = [:]
+    private var radioRateLimiter = APRSRadioRateLimiter.safeDefault
     private var reconnectTask: Task<Void, Never>?
     private var configuration = APRSIGateConfiguration()
 
@@ -227,7 +228,8 @@ public final class APRSIGateService: ObservableObject {
         let rawPacket = frame.ax25Data
         guard !rawPacket.isEmpty,
               rawPacket.count <= 330,
-              markPacketIfNew(rawPacket)
+              markPacketIfNew(rawPacket),
+              radioRateLimiter.allowsSend()
         else {
             return
         }

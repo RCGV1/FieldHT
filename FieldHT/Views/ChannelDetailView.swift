@@ -83,7 +83,8 @@ struct ChannelDetailView: View {
                     .disabled(!hasChanges)
                 }
             }
-            .scrollDismissesKeyboard(.immediately)
+            .scrollDismissesKeyboard(.interactively)
+            .fieldHTKeyboardDismissal()
             .interactiveDismissDisabled(hasChanges)
             .alert("Discard Changes?", isPresented: $showDiscardAlert) {
                 Button("Discard", role: .destructive) {
