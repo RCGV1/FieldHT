@@ -901,6 +901,18 @@ public class CommandConnection: BLEConnectionDelegate {
             throw ProtocolError.invalidReply
         }
     }
+
+    public func setDigitalSignalEnabled(_ isEnabled: Bool) async throws {
+        let body = ProtocolEncoder.encodeSetIsDigitalSignal(isEnabled)
+        let reply = try await sendCommandAndWaitForReply(
+            commandGroup: .basic,
+            command: BasicCommand.setIsDigitalSignal.rawValue,
+            body: body
+        )
+        guard case .reply(.success) = reply else {
+            throw ProtocolError.invalidReply
+        }
+    }
     
     public func executePFAction(_ effect: Int) async throws {
         let body = ProtocolEncoder.encodeDoProgFunc(effect)

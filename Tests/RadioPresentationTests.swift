@@ -29,8 +29,17 @@ enum RadioPresentationTests {
         )
         expectEqual(
             RadioPresentation.screenTimeoutOptions.map(\.label),
-            ["Always On", "5 seconds", "10 seconds", "15 seconds", "20 seconds", "25 seconds", "300 seconds (Max)"],
-            "screen timeout uses the radio's encoded choices through its 300-second maximum"
+            [
+                "Never", "3 seconds", "4 seconds", "5 seconds", "6 seconds", "7 seconds",
+                "8 seconds", "9 seconds", "10 seconds", "15 seconds", "20 seconds", "30 seconds",
+                "1 minute", "90 seconds", "2 minutes", "3 minutes", "4 minutes", "5 minutes"
+            ],
+            "screen timeout matches the physical radio's documented choices"
+        )
+        expectEqual(
+            RadioPresentation.screenTimeoutOptions.map(\.value),
+            Array(0...17),
+            "screen timeout options preserve the radio's contiguous encoded values"
         )
         expectEqual(
             RadioPresentation.txHoldOptions.map(\.label),
@@ -44,8 +53,8 @@ enum RadioPresentationTests {
         )
         expectEqual(
             RadioPresentation.micGainOptions.map(\.label),
-            ["0 dB", "+3 dB", "+6 dB", "+9 dB", "+12 dB", "+15 dB", "+18 dB", "+21 dB"],
-            "microphone gain uses the radio's dB steps instead of opaque levels"
+            ["-9 dB", "-6 dB", "-3 dB", "0 dB", "+3 dB", "+6 dB", "+9 dB", "+12 dB"],
+            "microphone gain uses the radio's actual dB calibration"
         )
         expectEqual(
             RadioPresentation.speakerMicName(model: nil, isBS22: false),

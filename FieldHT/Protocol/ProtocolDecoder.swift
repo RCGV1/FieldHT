@@ -308,9 +308,8 @@ public struct ProtocolDecoder {
         let powerSavingMode = try stream.readBool()
         let autoPowerOff = try stream.readInt(3)
         
-        // auto_share_loc_ch (5 bits, mapped)
-        let autoShareLocChRaw = try stream.readInt(5)
-        let autoShareLocCh: Int? = autoShareLocChRaw > 0 ? autoShareLocChRaw - 1 : nil
+        // auto_share_loc_ch is split between this low field and a later three-bit extension.
+        let autoShareLocChLower = try stream.readInt(5)
         
         let hmSpeaker = try stream.readInt(2)
         let positioningSystem = try stream.readInt(4)
@@ -331,7 +330,7 @@ public struct ProtocolDecoder {
         let disDigitalMute = try stream.readBool()
         let signalingEccEn = try stream.readBool()
         let chDataLock = try stream.readBool()
-        _ = try stream.readInt(3) // pad
+        let autoShareLocChUpper = try stream.readInt(3)
         let vfo1ModFreqX = try stream.readInt(32)
         let vfo2ModFreqX = try stream.readInt(32)
         
@@ -342,6 +341,8 @@ public struct ProtocolDecoder {
         
         let channelA = (channelAUpper << 4) | channelALower
         let channelB = (channelBUpper << 4) | channelBLower
+        let autoShareLocChRaw = autoShareLocChLower | (autoShareLocChUpper << 5)
+        let autoShareLocCh: Int? = autoShareLocChRaw > 0 ? autoShareLocChRaw - 1 : nil
         
         return Settings(
             channelA: channelA,

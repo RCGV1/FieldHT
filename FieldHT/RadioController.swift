@@ -586,6 +586,10 @@ public class RadioController: ObservableObject {
         try await connection.setRadioMode(mode)
     }
 
+    public func setDigitalSignalEnabled(_ isEnabled: Bool) async throws {
+        try await connection.setDigitalSignalEnabled(isEnabled)
+    }
+
     public func toggleScan() async throws {
         // 12 is the PFEffectType for TOGGLE_CH_SCAN in DO_PROG_FUNC
         try await connection.executePFAction(12)

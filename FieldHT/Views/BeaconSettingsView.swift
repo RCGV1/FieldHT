@@ -16,7 +16,11 @@ struct BeaconSettingsView: View {
     @State private var loadError: String?
     
     // Binding states
+    @State private var isDigitalModeEnabled = true
+    @State private var didChangeDigitalMode = false
     @State private var packetFormat: PacketFormat = .bss
+    @State private var beaconTransmitChannel: Int?
+    @State private var kissTNCEnabled = false
     @State private var aprsCallsign: String = ""
     @State private var aprsSSID: Int = 0
     @State private var aprsSymbol: String = ""
@@ -56,6 +60,12 @@ struct BeaconSettingsView: View {
     private var supportsExtendedSmartBeaconing: Bool {
         firmwareVersion >= 146
     }
+
+    private var memoryChannels: [Channel] {
+        radioManager.channels
+            .filter { $0.channelID < 250 && $0.rxFreq > 0 }
+            .sorted { $0.channelID < $1.channelID }
+    }
     
     var body: some View {
         Form {
@@ -84,16 +94,38 @@ struct BeaconSettingsView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if settings != nil {
-                Section(header: Text("Packet Format")) {
-                    Picker("Format", selection: $packetFormat) {
+                Section("Digital Mode") {
+                    Toggle("Enable BSS / APRS", isOn: Binding(
+                        get: { isDigitalModeEnabled },
+                        set: {
+                            isDigitalModeEnabled = $0
+                            didChangeDigitalMode = true
+                        }
+                    ))
+
+                    Picker("Packet Format", selection: $packetFormat) {
                         ForEach(PacketFormat.allCases, id: \.self) { format in
                             Text(format.rawValue).tag(format)
                         }
                     }
                     .pickerStyle(.segmented)
+                    .disabled(!isDigitalModeEnabled)
+
+                    Picker("Transmit Channel", selection: $beaconTransmitChannel) {
+                        Text("Current Channel").tag(nil as Int?)
+                        ForEach(memoryChannels, id: \.channelID) { channel in
+                            Text(RadioPresentation.channelMenuLabel(channelID: channel.channelID, name: channel.name))
+                                .tag(Optional(channel.channelID))
+                        }
+                    }
+                    .disabled(!isDigitalModeEnabled)
+
+                    Toggle("KISS TNC", isOn: $kissTNCEnabled)
+                        .disabled(!isDigitalModeEnabled)
                 }
                 
-                Section(header: Text("APRS Identity"), footer: Text("Enter your amateur radio callsign, optional SSID, and a two-character APRS symbol.")) {
+                if packetFormat == .aprs {
+                    Section(header: Text("APRS Identity"), footer: Text("Enter your amateur radio callsign, optional SSID, and a two-character APRS symbol.")) {
                     TextField("Callsign", text: $aprsCallsign)
                         .textInputAutocapitalization(.characters)
                         .disableAutocorrection(true)
@@ -110,14 +142,13 @@ struct BeaconSettingsView: View {
                         aprsSymbol = sym.code
                     }
 
-                    if packetFormat == .aprs {
-                        if supportsMicE {
-                            Toggle("Enable Mic-E", isOn: $micEEnabled)
-                        }
-                        if supportsSendIDByAPRS {
-                            Toggle("Send ID by APRS", isOn: $sendIDByAPRS)
-                        }
+                    if supportsMicE {
+                        Toggle("Enable Mic-E", isOn: $micEEnabled)
                     }
+                    if supportsSendIDByAPRS {
+                        Toggle("Send ID by APRS", isOn: $sendIDByAPRS)
+                    }
+                }
                 }
 
                 if packetFormat == .aprs, supportsAPRSPath {
@@ -147,7 +178,9 @@ struct BeaconSettingsView: View {
                     }
                 }
                 
-                Section(header: Text("Location Sharing"), footer: Text("The radio stores the sharing interval in 10-second steps.")) {
+                Section(header: Text("Location Beaconing"), footer: Text("The radio stores the sharing interval in 10-second steps.")) {
+                    Toggle("Share Location", isOn: $shouldShareLocation)
+
                     TextField("Beacon Message", text: $beaconMessage)
                     
                     HStack {
@@ -157,21 +190,26 @@ struct BeaconSettingsView: View {
                             .keyboardType(.numberPad)
                             .multilineTextAlignment(.trailing)
                     }
+
+                    Toggle("Allow Position Check", isOn: $allowPositionCheck)
+                    Toggle("Send Power / Voltage", isOn: $sendPwrVoltage)
                 }
 
-                if supportsSmartBeaconIntervals {
+                if packetFormat == .aprs {
                     Section(header: Text("Smart Beaconing"), footer: Text("The radio adjusts beacon timing based on movement. Minimum and maximum intervals are in minutes.")) {
                         Toggle("Enable Smart Beacon", isOn: $smartBeaconEnabled)
 
-                        Picker("Minimum Interval", selection: $smartBeaconMinimumInterval) {
-                            ForEach(0...15, id: \.self) { value in
-                                Text(value == 0 ? "Use share interval" : "\(value) minutes").tag(value)
+                        if supportsSmartBeaconIntervals {
+                            Picker("Minimum Interval", selection: $smartBeaconMinimumInterval) {
+                                ForEach(0...15, id: \.self) { value in
+                                    Text(value == 0 ? "Use share interval" : "\(value) minutes").tag(value)
+                                }
                             }
-                        }
 
-                        Picker("Maximum Interval", selection: $smartBeaconMaximumInterval) {
-                            ForEach(0...30, id: \.self) { value in
-                                Text(value == 0 ? "Use radio default" : "\(value) minutes").tag(value)
+                            Picker("Maximum Interval", selection: $smartBeaconMaximumInterval) {
+                                ForEach(0...30, id: \.self) { value in
+                                    Text(value == 0 ? "Use radio default" : "\(value) minutes").tag(value)
+                                }
                             }
                         }
                     }
@@ -183,13 +221,6 @@ struct BeaconSettingsView: View {
                     Toggle("Send BSS ID on PTT Release", isOn: $pttReleaseSendBSSUserID)
                 }
                 
-                Section(header: Text("Location and Station Data")) {
-                    Toggle("Should Share Location", isOn: $shouldShareLocation)
-                    Toggle("Allow Position Check", isOn: $allowPositionCheck)
-                    Toggle("Send Power/Voltage", isOn: $sendPwrVoltage)
-                    
-                }
-
                 Section(header: Text("Digipeater"), footer: Text("Set both Time to Live and Maximum Forwards above zero before relying on packet forwarding.")) {
                     HStack {
                         Text("Time to Live")
@@ -255,6 +286,10 @@ struct BeaconSettingsView: View {
 
                 self.settings = currentSettings
                 self.packetFormat = currentSettings.packetFormat
+                if let radioSettings = radioManager.radioController?.state?.settings {
+                    self.beaconTransmitChannel = radioSettings.autoShareLocCh
+                    self.kissTNCEnabled = radioSettings.kissEnabled
+                }
                 self.aprsCallsign = currentSettings.aprsCallsign.trimmingCharacters(in: .whitespacesAndNewlines)
                 self.aprsSSID = currentSettings.aprsSSID
                 self.aprsSymbol = currentSettings.aprsSymbol.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -322,8 +357,8 @@ struct BeaconSettingsView: View {
         updatedSettings.locationShareInterval = locationShareInterval
         updatedSettings.timeToLive = timeToLive
         updatedSettings.maxFwdTimes = maxFwdTimes
+        updatedSettings.smartBeaconEnabled = smartBeaconEnabled
         if supportsSmartBeaconIntervals {
-            updatedSettings.smartBeaconEnabled = smartBeaconEnabled
             updatedSettings.smartBeaconMinimumInterval = smartBeaconMinimumInterval
             updatedSettings.smartBeaconMaximumInterval = smartBeaconMaximumInterval
         }
@@ -331,6 +366,12 @@ struct BeaconSettingsView: View {
         Task {
             do {
                 try await radioManager.setBeaconSettings(updatedSettings)
+                try await radioManager.setAutoShareLocationChannel(beaconTransmitChannel)
+                try await radioManager.setKISSTNCEnabled(kissTNCEnabled)
+                if didChangeDigitalMode {
+                    try await radioManager.setDigitalSignalEnabled(isDigitalModeEnabled)
+                    didChangeDigitalMode = false
+                }
                 if supportsAPRSPath {
                     try await radioManager.setAPRSPath(aprsPath)
                 }

@@ -108,10 +108,7 @@ public class RadioManager: ObservableObject {
         if let scanStateOverride {
             return scanStateOverride
         }
-        if let settingsScan = radioController?.state?.settings.scan {
-            return settingsScan
-        }
-        return radioController?.state?.status.isScan ?? false
+        return radioController?.state?.status.isScan ?? radioController?.state?.settings.scan ?? false
     }
 
     var effectiveMonitorMode: ChannelType {
@@ -145,7 +142,6 @@ public class RadioManager: ObservableObject {
     @Published private var scanStateOverride: Bool?
     private var hasNotifiedLowBattery = false
     private var lastSpeakerMicEvidenceAt: Date?
-    private var scanReturnDoubleChannel: Int?
     private var lastMemoryChannelAIndex: Int?
     private var lastMemoryChannelBIndex: Int?
     
@@ -340,8 +336,8 @@ public class RadioManager: ObservableObject {
             .sink { [weak self] _ in
                 if let override = self?.scanStateOverride {
                     let reportedScan =
-                        radio.state?.settings.scan ??
-                        radio.state?.status.isScan
+                        radio.state?.status.isScan ??
+                        radio.state?.settings.scan
                     if reportedScan == override {
                         self?.scanStateOverride = nil
                     }
@@ -395,7 +391,6 @@ public class RadioManager: ObservableObject {
                 self.hmBatteryLevel = 0
                 self.lastSpeakerMicEvidenceAt = nil
                 self.scanStateOverride = nil
-                self.scanReturnDoubleChannel = nil
                 self.lastMemoryChannelAIndex = nil
                 self.lastMemoryChannelBIndex = nil
                 self.updateIdleTimerForCapture()
@@ -430,7 +425,6 @@ public class RadioManager: ObservableObject {
         isSpeakerMicConnecting = false
         updateIdleTimerForCapture()
         scanStateOverride = nil
-        scanReturnDoubleChannel = nil
         lastMemoryChannelAIndex = nil
         lastMemoryChannelBIndex = nil
 
@@ -870,55 +864,24 @@ public class RadioManager: ObservableObject {
 
     public func setScanning(_ shouldScan: Bool) {
         print("RadioManager: setScanning(\(shouldScan))")
-        guard let controller = radioController,
-              controller.state?.settings != nil else {
-            print("RadioManager: No controller or state!")
+        guard let controller = radioController else {
+            print("RadioManager: No controller!")
             return
         }
         guard shouldScan != isScanning else { return }
-
-        let previousSettings = controller.state?.settings ?? .empty()
-        if shouldScan {
-            scanReturnDoubleChannel = previousSettings.doubleChannel
-        }
 
         isBusy = true
         scanStateOverride = shouldScan
         Task {
             do {
-                var updatedSettings = try await controller.refreshSettings()
-                updatedSettings.scan = shouldScan
-
-                var shouldSetRadioMode = false
-                if shouldScan {
-                    updatedSettings.doubleChannel = ChannelType.off.toProtocolValue()
-                    shouldSetRadioMode = true
-                } else if let returnMode = scanReturnDoubleChannel {
-                    updatedSettings.doubleChannel = returnMode
-                    shouldSetRadioMode = true
-                }
-
-                print("RadioManager: Scan write settings channelA=\(updatedSettings.channelA) channelB=\(updatedSettings.channelB) scan=\(updatedSettings.scan) doubleChannel=\(updatedSettings.doubleChannel)")
-
-                try await controller.setSettings(updatedSettings)
-                if shouldSetRadioMode {
-                    try await controller.setRadioMode(0)
-                }
-
-                if !shouldScan {
-                    scanReturnDoubleChannel = nil
-                }
-
-                if controller.state?.status.isScan == shouldScan || controller.state?.settings.scan == shouldScan {
+                try await controller.toggleScan()
+                if controller.state?.status.isScan == shouldScan {
                     scanStateOverride = nil
                 }
 
-                print("RadioManager: Scan state updated successfully")
+                print("RadioManager: Channel scan toggled successfully")
                 isBusy = false
             } catch {
-                if shouldScan {
-                    scanReturnDoubleChannel = nil
-                }
                 scanStateOverride = nil
                 print("RadioManager: Failed to set scan state: \(error)")
                 errorMessage = "Failed to set scan state: \(error.localizedDescription)"
@@ -1357,6 +1320,38 @@ public class RadioManager: ObservableObject {
             throw RadioError.stateNotInitialized
         }
         try await controller.setBeaconSettings(settings)
+    }
+
+    public func setDigitalSignalEnabled(_ isEnabled: Bool) async throws {
+        guard let controller = radioController else {
+            throw RadioError.stateNotInitialized
+        }
+        isBusy = true
+        defer { isBusy = false }
+        try await controller.setDigitalSignalEnabled(isEnabled)
+    }
+
+    public func setKISSTNCEnabled(_ isEnabled: Bool) async throws {
+        guard let controller = radioController, var currentSettings = controller.state?.settings else {
+            throw RadioError.stateNotInitialized
+        }
+        isBusy = true
+        defer { isBusy = false }
+        currentSettings.kissEnabled = isEnabled
+        try await controller.setSettings(currentSettings)
+    }
+
+    public func setAutoShareLocationChannel(_ channelID: Int?) async throws {
+        guard let controller = radioController, var currentSettings = controller.state?.settings else {
+            throw RadioError.stateNotInitialized
+        }
+        guard channelID == nil || (0...254).contains(channelID!) else {
+            throw RadioError.stateNotInitialized
+        }
+        isBusy = true
+        defer { isBusy = false }
+        currentSettings.autoShareLocCh = channelID
+        try await controller.setSettings(currentSettings)
     }
 
     public func getAPRSPath() async throws -> String {

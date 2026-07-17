@@ -9,13 +9,24 @@ struct RadioChoice: Identifiable, Equatable {
 
 enum RadioPresentation {
     static let screenTimeoutOptions: [RadioChoice] = [
-        RadioChoice(value: 0, label: "Always On"),
-        RadioChoice(value: 1, label: "5 seconds"),
-        RadioChoice(value: 2, label: "10 seconds"),
-        RadioChoice(value: 3, label: "15 seconds"),
-        RadioChoice(value: 4, label: "20 seconds"),
-        RadioChoice(value: 5, label: "25 seconds"),
-        RadioChoice(value: 6, label: "300 seconds (Max)")
+        RadioChoice(value: 0, label: "Never"),
+        RadioChoice(value: 1, label: "3 seconds"),
+        RadioChoice(value: 2, label: "4 seconds"),
+        RadioChoice(value: 3, label: "5 seconds"),
+        RadioChoice(value: 4, label: "6 seconds"),
+        RadioChoice(value: 5, label: "7 seconds"),
+        RadioChoice(value: 6, label: "8 seconds"),
+        RadioChoice(value: 7, label: "9 seconds"),
+        RadioChoice(value: 8, label: "10 seconds"),
+        RadioChoice(value: 9, label: "15 seconds"),
+        RadioChoice(value: 10, label: "20 seconds"),
+        RadioChoice(value: 11, label: "30 seconds"),
+        RadioChoice(value: 12, label: "1 minute"),
+        RadioChoice(value: 13, label: "90 seconds"),
+        RadioChoice(value: 14, label: "2 minutes"),
+        RadioChoice(value: 15, label: "3 minutes"),
+        RadioChoice(value: 16, label: "4 minutes"),
+        RadioChoice(value: 17, label: "5 minutes")
     ]
 
     static let txHoldOptions: [RadioChoice] = [
@@ -31,8 +42,8 @@ enum RadioPresentation {
     }
 
     static let micGainOptions: [RadioChoice] = (0...7).map { value in
-        let decibels = value * 3
-        let label = decibels == 0 ? "0 dB" : "+\(decibels) dB"
+        let decibels = (value - 3) * 3
+        let label = decibels > 0 ? "+\(decibels) dB" : "\(decibels) dB"
         return RadioChoice(value: value, label: label)
     }
 

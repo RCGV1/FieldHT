@@ -126,6 +126,18 @@ public struct Settings: Codable, Equatable {
         self.vfo2ModFreqX = vfo2ModFreqX
         self.reservedExt1 = reservedExt1
     }
+
+    /// The protocol stores the two KISS flags in the legacy `vfoX` bit field.
+    public var kissUploadTxMessage: Bool {
+        get { (vfoX & 0b10) != 0 }
+        set { vfoX = (vfoX & ~0b10) | (newValue ? 0b10 : 0) }
+    }
+
+    public var kissEnabled: Bool {
+        get { (vfoX & 0b01) != 0 }
+        set { vfoX = (vfoX & ~0b01) | (newValue ? 0b01 : 0) }
+    }
+
     public static func empty() -> Settings {
         return Settings(
             channelA: 0,

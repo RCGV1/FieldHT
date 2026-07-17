@@ -166,9 +166,9 @@ public struct ProtocolEncoder {
         }
         stream.writeInt(settings.autoPowerOff, bitCount: 3)
         
-        // auto_share_loc_ch (mapped)
-        let autoShareLocChRaw = settings.autoShareLocCh.map { $0 + 1 } ?? 0
-        stream.writeInt(autoShareLocChRaw, bitCount: 5)
+        // auto_share_loc_ch is split between this low field and a later three-bit extension.
+        let autoShareLocChRaw = settings.autoShareLocCh.map { min(max($0, 0), 254) + 1 } ?? 0
+        stream.writeInt(autoShareLocChRaw & 0x1F, bitCount: 5)
         
         stream.writeInt(settings.hmSpeaker, bitCount: 2)
         stream.writeInt(settings.positioningSystem, bitCount: 4)
@@ -192,7 +192,7 @@ public struct ProtocolEncoder {
         stream.writeBool(settings.disDigitalMute)
         stream.writeBool(settings.signalingEccEn)
         stream.writeBool(settings.chDataLock)
-        stream.writeInt(0, bitCount: 3) // pad
+        stream.writeInt((autoShareLocChRaw >> 5) & 0x07, bitCount: 3)
         stream.writeInt(settings.vfo1ModFreqX, bitCount: 32)
         stream.writeInt(settings.vfo2ModFreqX, bitCount: 32)
         stream.writeInt(settings.reservedExt1, bitCount: 16)
@@ -220,6 +220,10 @@ public struct ProtocolEncoder {
         var stream = BitStream()
         stream.writeInt(mode, bitCount: 8)
         return stream.toData()
+    }
+
+    public static func encodeSetIsDigitalSignal(_ isEnabled: Bool) -> Data {
+        Data([isEnabled ? 1 : 0])
     }
 
     public static func encodeSetTime(_ date: Date) -> Data {
