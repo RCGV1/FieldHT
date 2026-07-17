@@ -331,12 +331,25 @@ public struct ProtocolDecoder {
         let signalingEccEn = try stream.readBool()
         let chDataLock = try stream.readBool()
         let autoShareLocChUpper = try stream.readInt(3)
-        let vfo1ModFreqX = try stream.readInt(32)
-        let vfo2ModFreqX = try stream.readInt(32)
-        
-        var reservedExt1 = 0
-        if stream.remaining >= 16 {
-            reservedExt1 = try stream.readInt(16)
+        let kissTxDelay = try stream.readInt(8)
+        let kissTxTail = try stream.readInt(8)
+        let voxEnabled = try stream.readBool()
+        let voxLevel = try stream.readInt(3)
+        let disableBluetoothMic = try stream.readBool()
+        let voxDelay = try stream.readInt(3)
+        let noiseSuppressionEnabled = try stream.readBool()
+        let alarmVolume = try stream.readInt(4)
+        let useCustomLocation = try stream.readBool()
+        let gpwplUploadEnabled = try stream.readBool()
+        let vfo1ModFreqX = try stream.readInt(1)
+        let rawExtensionData: Data
+        if stream.remaining > 0 {
+            let remainingBits = try stream.readBits(stream.remaining)
+            var extensionStream = BitStream()
+            extensionStream.writeBits(remainingBits)
+            rawExtensionData = extensionStream.toData()
+        } else {
+            rawExtensionData = Data()
         }
         
         let channelA = (channelAUpper << 4) | channelALower
@@ -383,8 +396,19 @@ public struct ProtocolDecoder {
             signalingEccEn: signalingEccEn,
             chDataLock: chDataLock,
             vfo1ModFreqX: vfo1ModFreqX,
-            vfo2ModFreqX: vfo2ModFreqX,
-            reservedExt1: reservedExt1
+            vfo2ModFreqX: 0,
+            reservedExt1: 0,
+            kissTxDelay: kissTxDelay,
+            kissTxTail: kissTxTail,
+            voxEnabled: voxEnabled,
+            voxLevel: voxLevel,
+            disableBluetoothMic: disableBluetoothMic,
+            voxDelay: voxDelay,
+            noiseSuppressionEnabled: noiseSuppressionEnabled,
+            alarmVolume: alarmVolume,
+            useCustomLocation: useCustomLocation,
+            gpwplUploadEnabled: gpwplUploadEnabled,
+            rawExtensionData: rawExtensionData
         )
     }
     

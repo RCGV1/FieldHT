@@ -47,6 +47,10 @@ enum RadioPresentation {
         return RadioChoice(value: value, label: label)
     }
 
+    static let alarmVolumeOptions: [RadioChoice] = [RadioChoice(value: 0, label: "Mute")] + (1...15).map { value in
+        RadioChoice(value: value, label: "Level \(value)")
+    }
+
     static func sMeterLabel(forPercent value: Int) -> String {
         let clamped = min(max(value, 0), 100)
         if clamped >= 96 {

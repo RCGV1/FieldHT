@@ -334,6 +334,12 @@ public class SettingsViewModel: ObservableObject {
         current.disTone = value
         updateSettings(current)
     }
+
+    public func updateAlarmVolume(_ value: Int) {
+        guard var current = settings else { return }
+        current.alarmVolume = min(max(value, 0), 15)
+        updateSettings(current)
+    }
     
     /// Update powerSavingMode
     public func updatePowerSavingMode(_ value: Bool) {

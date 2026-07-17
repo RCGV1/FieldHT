@@ -39,9 +39,22 @@ public struct Settings: Codable, Equatable {
     public var disDigitalMute: Bool
     public var signalingEccEn: Bool
     public var chDataLock: Bool
+    public var kissTxDelay: Int
+    public var kissTxTail: Int
+    public var voxEnabled: Bool
+    public var voxLevel: Int
+    public var disableBluetoothMic: Bool
+    public var voxDelay: Int
+    public var noiseSuppressionEnabled: Bool
+    public var alarmVolume: Int
+    public var useCustomLocation: Bool
+    public var gpwplUploadEnabled: Bool
     public var vfo1ModFreqX: Int
+    // Retained for source compatibility with older app builds. These bits are not part of the current settings prefix.
     public var vfo2ModFreqX: Int
     public var reservedExt1: Int // Unknown 2 bytes at end
+    /// Bytes after the fixed settings prefix, retained so custom location data is not overwritten.
+    public var rawExtensionData: Data
     
     public init(
         channelA: Int,
@@ -83,7 +96,18 @@ public struct Settings: Codable, Equatable {
         chDataLock: Bool,
         vfo1ModFreqX: Int,
         vfo2ModFreqX: Int,
-        reservedExt1: Int = 0
+        reservedExt1: Int = 0,
+        kissTxDelay: Int = 0,
+        kissTxTail: Int = 0,
+        voxEnabled: Bool = false,
+        voxLevel: Int = 0,
+        disableBluetoothMic: Bool = false,
+        voxDelay: Int = 0,
+        noiseSuppressionEnabled: Bool = false,
+        alarmVolume: Int = 0,
+        useCustomLocation: Bool = false,
+        gpwplUploadEnabled: Bool = false,
+        rawExtensionData: Data = Data()
     ) {
         self.channelA = channelA
         self.channelB = channelB
@@ -122,9 +146,20 @@ public struct Settings: Codable, Equatable {
         self.disDigitalMute = disDigitalMute
         self.signalingEccEn = signalingEccEn
         self.chDataLock = chDataLock
+        self.kissTxDelay = kissTxDelay
+        self.kissTxTail = kissTxTail
+        self.voxEnabled = voxEnabled
+        self.voxLevel = voxLevel
+        self.disableBluetoothMic = disableBluetoothMic
+        self.voxDelay = voxDelay
+        self.noiseSuppressionEnabled = noiseSuppressionEnabled
+        self.alarmVolume = alarmVolume
+        self.useCustomLocation = useCustomLocation
+        self.gpwplUploadEnabled = gpwplUploadEnabled
         self.vfo1ModFreqX = vfo1ModFreqX
         self.vfo2ModFreqX = vfo2ModFreqX
         self.reservedExt1 = reservedExt1
+        self.rawExtensionData = rawExtensionData
     }
 
     /// The protocol stores the two KISS flags in the legacy `vfoX` bit field.
