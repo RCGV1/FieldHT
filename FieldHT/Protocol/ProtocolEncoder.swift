@@ -200,7 +200,7 @@ public struct ProtocolEncoder {
         stream.writeBool(settings.disableBluetoothMic)
         stream.writeInt(settings.voxDelay, bitCount: 3)
         stream.writeBool(settings.noiseSuppressionEnabled)
-        stream.writeInt(settings.alarmVolume, bitCount: 4)
+        stream.writeInt(settings.reservedAlarmVolume, bitCount: 4)
         stream.writeBool(settings.useCustomLocation)
         stream.writeBool(settings.gpwplUploadEnabled)
         stream.writeInt(settings.vfo1ModFreqX, bitCount: 1)

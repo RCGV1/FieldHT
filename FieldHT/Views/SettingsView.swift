@@ -331,7 +331,7 @@ struct SettingsView: View {
                                     set: { viewModel.updateDisTone($0) }
                                 )
                             ) {
-                                Label("Mute Key and Operation Tones", systemImage: "speaker.slash")
+                                Label("Disable Key and Operation Tones", systemImage: "speaker.slash")
                             }
 
                             Toggle(

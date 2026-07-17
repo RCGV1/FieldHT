@@ -46,7 +46,8 @@ public struct Settings: Codable, Equatable {
     public var disableBluetoothMic: Bool
     public var voxDelay: Int
     public var noiseSuppressionEnabled: Bool
-    public var alarmVolume: Int
+    /// Preserves a firmware field with no verified public behavior.
+    public var reservedAlarmVolume: Int
     public var useCustomLocation: Bool
     public var gpwplUploadEnabled: Bool
     public var vfo1ModFreqX: Int
@@ -104,7 +105,7 @@ public struct Settings: Codable, Equatable {
         disableBluetoothMic: Bool = false,
         voxDelay: Int = 0,
         noiseSuppressionEnabled: Bool = false,
-        alarmVolume: Int = 0,
+        reservedAlarmVolume: Int = 0,
         useCustomLocation: Bool = false,
         gpwplUploadEnabled: Bool = false,
         rawExtensionData: Data = Data()
@@ -153,7 +154,7 @@ public struct Settings: Codable, Equatable {
         self.disableBluetoothMic = disableBluetoothMic
         self.voxDelay = voxDelay
         self.noiseSuppressionEnabled = noiseSuppressionEnabled
-        self.alarmVolume = alarmVolume
+        self.reservedAlarmVolume = reservedAlarmVolume
         self.useCustomLocation = useCustomLocation
         self.gpwplUploadEnabled = gpwplUploadEnabled
         self.vfo1ModFreqX = vfo1ModFreqX

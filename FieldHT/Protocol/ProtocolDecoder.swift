@@ -338,7 +338,7 @@ public struct ProtocolDecoder {
         let disableBluetoothMic = try stream.readBool()
         let voxDelay = try stream.readInt(3)
         let noiseSuppressionEnabled = try stream.readBool()
-        let alarmVolume = try stream.readInt(4)
+        let reservedAlarmVolume = try stream.readInt(4)
         let useCustomLocation = try stream.readBool()
         let gpwplUploadEnabled = try stream.readBool()
         let vfo1ModFreqX = try stream.readInt(1)
@@ -405,7 +405,7 @@ public struct ProtocolDecoder {
             disableBluetoothMic: disableBluetoothMic,
             voxDelay: voxDelay,
             noiseSuppressionEnabled: noiseSuppressionEnabled,
-            alarmVolume: alarmVolume,
+            reservedAlarmVolume: reservedAlarmVolume,
             useCustomLocation: useCustomLocation,
             gpwplUploadEnabled: gpwplUploadEnabled,
             rawExtensionData: rawExtensionData

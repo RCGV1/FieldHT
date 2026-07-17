@@ -29,7 +29,7 @@ enum SettingsProtocolTests {
         settings.disableBluetoothMic = true
         settings.voxDelay = 4
         settings.noiseSuppressionEnabled = true
-        settings.alarmVolume = 6
+        settings.reservedAlarmVolume = 6
         settings.useCustomLocation = true
         settings.gpwplUploadEnabled = true
         settings.vfo1ModFreqX = 1
@@ -47,7 +47,7 @@ enum SettingsProtocolTests {
             expectEqual(decoded.disableBluetoothMic, true, "Bluetooth mic disable survives a settings round trip")
             expectEqual(decoded.voxDelay, 4, "VOX delay survives a settings round trip")
             expectEqual(decoded.noiseSuppressionEnabled, true, "Noise suppression survives a settings round trip")
-            expectEqual(decoded.alarmVolume, 6, "Prompt and tone volume survives a settings round trip")
+            expectEqual(decoded.reservedAlarmVolume, 6, "Reserved firmware data survives a settings round trip")
             expectEqual(decoded.useCustomLocation, true, "Custom location setting survives a settings round trip")
             expectEqual(decoded.gpwplUploadEnabled, true, "GPWPL upload setting survives a settings round trip")
             expectEqual(decoded.vfo1ModFreqX, 1, "VFO extension bit survives a settings round trip")

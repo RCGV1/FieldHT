@@ -100,20 +100,6 @@ struct SpeakerMicView: View {
         )
     }
 
-    private var alarmVolumeBinding: Binding<Int> {
-        Binding(
-            get: { viewModel.settings?.alarmVolume ?? 8 },
-            set: { viewModel.updateAlarmVolume($0) }
-        )
-    }
-
-    private var muteOperationTonesBinding: Binding<Bool> {
-        Binding(
-            get: { viewModel.settings?.disTone ?? false },
-            set: { viewModel.updateDisTone($0) }
-        )
-    }
-
     var body: some View {
         Group {
             if !radioManager.isConnected {
@@ -265,17 +251,6 @@ struct SpeakerMicView: View {
                         Text("Automatic preserves the radio's normal routing. Headset Mode selects Voice or Phone behavior for supported Bluetooth headsets.")
                     }
 
-                    Section {
-                        Picker("Prompt & Tone Volume", selection: alarmVolumeBinding) {
-                            ForEach(RadioPresentation.alarmVolumeOptions) { option in
-                                Text(option.label).tag(option.value)
-                            }
-                        }
-
-                        Toggle("Mute Channel Announcements & Tones", isOn: muteOperationTonesBinding)
-                    } header: {
-                        Text("Hand Mic Prompts")
-                    }
                 }
             } else if let error = viewModel.errorMessage {
                 VStack(spacing: 16) {
