@@ -641,7 +641,7 @@ enum AIChannelImporter {
         return cells
     }
 
-    private static func normalizeHeaderLabel(_ text: String) -> String {
+    private nonisolated static func normalizeHeaderLabel(_ text: String) -> String {
         text
             .lowercased()
             .replacingOccurrences(of: #"[^a-z0-9]+"#, with: "", options: .regularExpression)

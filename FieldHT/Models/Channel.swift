@@ -50,7 +50,7 @@ public enum BandwidthType: String, Codable, CaseIterable {
 }
 
 /// Digital Coded Squelch (DCS)
-public struct DCS: Codable, Equatable, Hashable {
+public struct DCS: Codable, Equatable, Hashable, Sendable {
     public let n: Int
     
     public init(n: Int) {
@@ -59,7 +59,7 @@ public struct DCS: Codable, Equatable, Hashable {
 }
 
 /// Sub-audio type (can be a frequency, DCS, or nil)
-public enum SubAudio: Codable, Equatable, Hashable {
+public enum SubAudio: Codable, Equatable, Hashable, Sendable {
     case frequency(Double)
     case dcs(DCS)
     
@@ -152,4 +152,3 @@ public struct Channel: Codable, Equatable {
         self.name = name
     }
 }
-

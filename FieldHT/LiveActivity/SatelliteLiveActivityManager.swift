@@ -1,7 +1,7 @@
 import Foundation
 
 #if os(iOS) && !targetEnvironment(macCatalyst) && canImport(ActivityKit)
-import ActivityKit
+@preconcurrency import ActivityKit
 #endif
 
 @MainActor
