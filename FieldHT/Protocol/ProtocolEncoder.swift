@@ -256,7 +256,8 @@ public struct ProtocolEncoder {
         txSubAudio: SubAudio? = nil,
         mode: FrequencyMode,
         step: FrequencyScanStep = .fiveKHz,
-        extendedParameter: UInt16 = 0
+        extendedParameter: UInt16 = 0,
+        includeExtendedParameters: Bool = true
     ) -> Data {
         var stream = BitStream()
         stream.writeInt(0, bitCount: 2) // FM modulation
@@ -270,7 +271,9 @@ public struct ProtocolEncoder {
         stream.writeInt(mode.rawValue, bitCount: 4)
         stream.writeInt(0, bitCount: 6) // reserved
         stream.writeInt(0, bitCount: 2) // frequency-difference mode: no change
-        stream.writeInt(Int(extendedParameter), bitCount: 16)
+        if includeExtendedParameters {
+            stream.writeInt(Int(extendedParameter), bitCount: 16)
+        }
         return stream.toData()
     }
 

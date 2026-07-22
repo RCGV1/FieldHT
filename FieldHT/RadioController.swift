@@ -41,6 +41,10 @@ public class RadioController: ObservableObject {
         deviceInfo.firmwareVersion >= 143
     }
 
+    private var supportsExtendedFrequencyModeParameters: Bool {
+        deviceInfo.firmwareVersion >= 137
+    }
+
     private func isValidChannelID(_ channelID: Int, deviceInfo: DeviceInfo) -> Bool {
         (0..<deviceInfo.channelCount).contains(channelID) || [251, 252, 253].contains(channelID)
     }
@@ -611,7 +615,8 @@ public class RadioController: ObservableObject {
             rxSubAudio: rxSubAudio,
             txSubAudio: txSubAudio,
             mode: .satellite,
-            extendedParameter: 0x61A8
+            extendedParameter: 0x61A8,
+            includeExtendedParameters: supportsExtendedFrequencyModeParameters
         )
         _ = try await connection.getFreqModeStatus()
     }
@@ -630,7 +635,8 @@ public class RadioController: ObservableObject {
             rxSubAudio: rxSubAudio,
             txSubAudio: txSubAudio,
             mode: mode,
-            step: step
+            step: step,
+            includeExtendedParameters: supportsExtendedFrequencyModeParameters
         )
     }
 

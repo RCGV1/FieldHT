@@ -268,7 +268,8 @@ public class CommandConnection: BLEConnectionDelegate {
         txSubAudio: SubAudio? = nil,
         mode: FrequencyMode,
         step: FrequencyScanStep = .fiveKHz,
-        extendedParameter: UInt16 = 0
+        extendedParameter: UInt16 = 0,
+        includeExtendedParameters: Bool = true
     ) async throws {
         let body = ProtocolEncoder.encodeFreqModeSetPar(
             rxFreqHzX: rxFreqHzX,
@@ -277,7 +278,8 @@ public class CommandConnection: BLEConnectionDelegate {
             txSubAudio: txSubAudio,
             mode: mode,
             step: step,
-            extendedParameter: extendedParameter
+            extendedParameter: extendedParameter,
+            includeExtendedParameters: includeExtendedParameters
         )
         let data = ProtocolEncoder.encodeMessage(
             commandGroup: .basic,

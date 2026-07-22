@@ -13,6 +13,8 @@ public enum FrequencyMode: Int, Sendable {
     case scanUp = 1
     case scanDown = 2
     case exact = 3
+    case noaa = 6
+    case toneScan = 7
     case satellite = 10
 }
 
