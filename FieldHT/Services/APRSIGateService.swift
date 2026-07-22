@@ -52,6 +52,7 @@ public final class APRSIGateService: ObservableObject {
 
     @Published public private(set) var status = "Stopped"
     @Published public private(set) var lastError: String?
+    @Published public private(set) var suppressedInternetPacketCount = 0
 
     private let queue = DispatchQueue(label: "FieldHT.APRSIS")
     private var connection: NWConnection?
@@ -228,9 +229,13 @@ public final class APRSIGateService: ObservableObject {
         let rawPacket = frame.ax25Data
         guard !rawPacket.isEmpty,
               rawPacket.count <= 330,
-              markPacketIfNew(rawPacket),
-              radioRateLimiter.allowsSend()
+              markPacketIfNew(rawPacket)
         else {
+            return
+        }
+
+        guard radioRateLimiter.allowsSend() else {
+            suppressedInternetPacketCount += 1
             return
         }
 

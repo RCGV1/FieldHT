@@ -5,8 +5,8 @@ import Foundation
 /// likely to trigger the radio's transmit protections.
 struct APRSRadioRateLimiter {
     static let safeDefault = APRSRadioRateLimiter(
-        minimumInterval: 5,
-        maximumPacketsPerMinute: 12
+        minimumInterval: 30,
+        maximumPacketsPerMinute: 2
     )
 
     let minimumInterval: TimeInterval

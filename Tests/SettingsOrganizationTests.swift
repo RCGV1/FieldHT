@@ -12,7 +12,7 @@ enum SettingsOrganizationTests {
             throw SettingsOrganizationTestFailure(message: "Missing \(category) settings category")
         }
 
-        for control in ["Enable VOX", "Sensitivity", "Radio Time Zone", "App Brightness"] where !settings.contains(control) {
+        for control in ["Enable VOX", "Sensitivity", "Radio Time Zone", "Radio Screen Timeout"] where !settings.contains(control) {
             throw SettingsOrganizationTestFailure(message: "Missing \(control) control")
         }
 

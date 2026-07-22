@@ -313,13 +313,12 @@ private struct PowerSettingsView: View {
 
 private struct DisplaySettingsView: View {
     @AppStorage("FieldHT.appLanguage") private var appLanguage = "system"
-    @AppStorage("FieldHT.appBrightness") private var appBrightness = 0.0
     @ObservedObject var viewModel: SettingsViewModel
 
     var body: some View {
         Form {
             Section("Radio Display") {
-                Picker("Screen Timeout", selection: Binding(get: { viewModel.settings?.screenTimeout ?? 0 }, set: viewModel.updateScreenTimeout)) {
+                Picker("Radio Screen Timeout", selection: Binding(get: { viewModel.settings?.screenTimeout ?? 0 }, set: viewModel.updateScreenTimeout)) {
                     ForEach(RadioPresentation.screenTimeoutOptions) { option in
                         Text(option.label).tag(option.value)
                     }
@@ -339,15 +338,8 @@ private struct DisplaySettingsView: View {
                     Text("System").tag("system")
                     Text("English").tag("en")
                 }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("App Brightness")
-                    Slider(value: $appBrightness, in: -0.3...0.3, step: 0.05)
-                }
             } header: {
                 Text("App Appearance")
-            } footer: {
-                Text("App Brightness adjusts FieldHT only. The radio protocol does not expose a verified backlight setting.")
             }
         }
         .navigationTitle("Display")

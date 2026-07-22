@@ -53,10 +53,19 @@ struct APRSIGateSettingsView: View {
                 }
             }
 
-            Section("Routing") {
+            Section {
                 Toggle("Radio to Internet", isOn: binding(\.radioToInternet))
                 Toggle("Internet to Radio", isOn: binding(\.internetToRadio))
                 Toggle("Receive APRS Messages", isOn: binding(\.receiveMessages))
+            } header: {
+                Text("Routing")
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Incoming APRS-IS traffic is sent to the radio at most twice per minute.")
+                    if gateway.suppressedInternetPacketCount > 0 {
+                        Text("\(gateway.suppressedInternetPacketCount) incoming packet\(gateway.suppressedInternetPacketCount == 1 ? "" : "s") suppressed to protect RF airtime.")
+                    }
+                }
             }
 
             Section {

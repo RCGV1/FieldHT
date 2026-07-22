@@ -15,7 +15,6 @@ struct FieldHTApp: App {
     @StateObject private var radioManager = RadioManager()
     @StateObject private var radioControlLayout = RadioControlLayoutStore.shared
     @AppStorage("FieldHT.appLanguage") private var appLanguage = "system"
-    @AppStorage("FieldHT.appBrightness") private var appBrightness = 0.0
     @Environment(\.scenePhase) private var scenePhase
     private let notificationManager = NotificationManager.shared
 
@@ -30,7 +29,6 @@ struct FieldHTApp: App {
                 .environmentObject(radioManager)
                 .environmentObject(radioControlLayout)
                 .environment(\.locale, appLanguage == "en" ? Locale(identifier: "en") : .current)
-                .brightness(appBrightness)
                 .onAppear {
                     notificationManager.radioManager = radioManager
                     notificationManager.requestPermission()
