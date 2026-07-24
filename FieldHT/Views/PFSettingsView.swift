@@ -5,6 +5,7 @@
 
 import SwiftUI
 import TipKit
+import Combine
 
 
 struct ButtonTip: Tip {
@@ -283,11 +284,26 @@ struct PFSettingsView: View {
     }
 }
 
-#Preview {
-    NavigationView {
-        PFSettingsView(
-            radioController: RadioController.newBLE(deviceUUID: UUID(), radioManager: RadioManager()),
-            viewModel: SettingsViewModel()
-        )
+private struct PFSettingsPreview: View {
+    @StateObject private var context = PFSettingsPreviewContext()
+
+    var body: some View {
+        NavigationView {
+            PFSettingsView(
+                radioController: context.radioController,
+                viewModel: context.viewModel
+            )
+        }
     }
+}
+
+@MainActor
+private final class PFSettingsPreviewContext: ObservableObject {
+    let radioManager = RadioManager()
+    let viewModel = SettingsViewModel()
+    lazy var radioController = RadioController.newBLE(deviceUUID: UUID(), radioManager: radioManager)
+}
+
+#Preview {
+    PFSettingsPreview()
 }
