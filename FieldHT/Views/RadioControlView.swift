@@ -402,7 +402,7 @@ struct RadioControlView: View {
         if controller.state == nil {
             try? await controller.hydrate()
         } else if controller.channelsForCurrentRegion.isEmpty {
-            _ = try? await controller.hydrateChannels()
+            _ = try? await controller.hydrateChannels(refreshRegionNames: false)
         }
 
         viewModel.loadChannels()

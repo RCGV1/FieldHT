@@ -5,7 +5,7 @@ struct SpeakerMicView: View {
     @EnvironmentObject var radioManager: RadioManager
     @ObservedObject var viewModel: SettingsViewModel
     @StateObject private var scanner = BLEScanner()
-    @State private var hasAttemptedAutoReconnect = false
+    @State private var connectingAccessoryName = "speaker mic"
 
     private var accessoryController: SpeakerMicController? {
         radioManager.speakerMicController
@@ -143,16 +143,8 @@ struct SpeakerMicView: View {
                                 }
                             }
 
-                            Button("Disconnect Speaker Mic", role: .destructive) {
+                            Button("Disconnect Setup Link", role: .destructive) {
                                 radioManager.disconnectSpeakerMic()
-                            }
-                        } else if radioManager.isSpeakerMicConnecting {
-                            ProgressView("Connecting to speaker mic...")
-                        } else if let savedAccessory {
-                            Button {
-                                connectAccessory(savedAccessory)
-                            } label: {
-                                Label("Reconnect Speaker Mic", systemImage: "link.badge.plus")
                             }
                         }
 
@@ -170,12 +162,12 @@ struct SpeakerMicView: View {
                             directConnectAction
 
                             if scanner.bluetoothState != .poweredOn {
-                                hintRow(title: "Bluetooth is off", detail: "Turn it on to discover the speaker mic.")
+                                hintRow(title: "Bluetooth is not ready", detail: "Enable Bluetooth and allow FieldHT access in Settings to discover the speaker mic.")
                             } else if nearbyAccessoryCandidates.isEmpty {
                                 hintRow(
                                     title: isScanningForAccessories ? "Looking for speaker mics..." : "No speaker mic found",
                                     detail: isSavedAccessoryAvailable
-                                        ? "This screen will try the last speaker mic automatically. Scan if you want to pick a different one."
+                                        ? "Connect the saved speaker mic when it is nearby, or scan to choose another. No connection starts automatically."
                                         : "The radio can still use the speaker mic on its own. Connect directly only when you want battery, firmware, or button setup."
                                 )
                             } else {
@@ -201,7 +193,7 @@ struct SpeakerMicView: View {
                         } header: {
                             Text("Direct Speaker Mic Connection")
                         } footer: {
-                            Text("FieldHT currently supports direct button setup for the BS-22 only. It will try to reconnect the last speaker mic automatically when this screen opens.")
+                            Text("This optional BLE link is for BS-22 button setup, firmware information, and battery readings. Audio stays paired to the radio. Scans stop after 15 seconds; opening this screen does not reconnect anything.")
                         }
                     }
 
@@ -274,42 +266,29 @@ struct SpeakerMicView: View {
             }
         }
         .navigationTitle("Speaker Mic")
-        .task {
-            autoReconnectSavedSpeakerMicIfNeeded()
-        }
         .onChange(of: radioManager.speakerMicController?.isConnected == true) {
             updateScanningState()
         }
+        .onChange(of: radioManager.isSpeakerMicConnecting) { updateScanningState() }
         .onChange(of: scanner.bluetoothState) {
             updateScanningState()
-            autoReconnectSavedSpeakerMicIfNeeded()
-        }
-        .onChange(of: radioManager.lastSpeakerMicDeviceUUID) {
-            hasAttemptedAutoReconnect = false
-            autoReconnectSavedSpeakerMicIfNeeded()
         }
         .onDisappear {
-            hasAttemptedAutoReconnect = false
+            scanner.stopScanning()
+            radioManager.cancelSpeakerMicConnection()
         }
     }
 
     private func connectAccessory(_ device: DiscoveredDevice) {
-        radioManager.connectSpeakerMic(to: device.peripheral.identifier)
+        scanner.stopScanning()
+        connectingAccessoryName = device.name
+        radioManager.connectSpeakerMic(to: device.id)
     }
 
-    private func autoReconnectSavedSpeakerMicIfNeeded() {
-        guard !hasAttemptedAutoReconnect else { return }
-        guard radioManager.isConnected else { return }
-        guard accessoryController?.isConnected != true else { return }
-        guard !radioManager.isSpeakerMicConnecting else { return }
-        guard let lastUUID = radioManager.lastSpeakerMicDeviceUUID else { return }
-
-        // Wait until Bluetooth is in a real state before trying; if it is still
-        // coming up, onChange will re-run this once ready.
-        guard scanner.bluetoothState == .poweredOn || scanner.bluetoothState == .unknown else { return }
-
-        hasAttemptedAutoReconnect = true
-        radioManager.connectSpeakerMic(to: lastUUID)
+    private func scanForAccessories() {
+        radioManager.cancelSpeakerMicConnection()
+        scanner.stopScanning()
+        scanner.startScanning(mode: .allDevices)
     }
 
     private func updateScanningState() {
@@ -352,45 +331,40 @@ struct SpeakerMicView: View {
     @ViewBuilder
     private var directConnectAction: some View {
         if radioManager.isSpeakerMicConnecting {
-            HStack(spacing: 12) {
-                ProgressView()
-                Text("Connecting to speaker mic...")
-                    .foregroundStyle(.secondary)
-            }
-        } else if let savedAccessory {
-            VStack(alignment: .leading, spacing: 10) {
-                Button {
-                    connectAccessory(savedAccessory)
-                } label: {
-                    Label("Reconnect Last Speaker Mic", systemImage: "link.badge.plus")
-                }
-
-                Button {
-                    if scanner.isScanning {
-                        scanner.stopScanning()
-                    } else {
-                        scanner.startScanning(mode: .allDevices)
-                    }
-                } label: {
-                    Label(
-                    isScanningForAccessories ? "Stop Scan" : "Find Another Speaker Mic",
-                        systemImage: isScanningForAccessories ? "stop.circle" : "dot.radiowaves.left.and.right"
-                    )
-                }
-                .buttonStyle(.bordered)
-            }
+            ProgressView("Connecting to \(connectingAccessoryName)...")
+            Button("Cancel Connection", role: .cancel) { radioManager.cancelSpeakerMicConnection() }
+                .accessibilityIdentifier("speakerMic.cancelConnection")
+            Button("Choose Another Speaker Mic", systemImage: "magnifyingglass", action: scanForAccessories)
+                .disabled(scanner.bluetoothState != .poweredOn)
         } else {
+            if let savedUUID = radioManager.lastSpeakerMicDeviceUUID {
+                Button {
+                    scanner.stopScanning()
+                    connectingAccessoryName = savedAccessory?.name ?? "saved speaker mic"
+                    radioManager.connectSpeakerMic(to: savedUUID)
+                } label: {
+                    Label("Connect Last Speaker Mic", systemImage: "link.badge.plus")
+                }
+                .disabled(scanner.bluetoothState != .poweredOn)
+            }
             Button {
                 if scanner.isScanning {
                     scanner.stopScanning()
                 } else {
-                    scanner.startScanning(mode: .allDevices)
+                    scanForAccessories()
                 }
             } label: {
                 Label(
                     isScanningForAccessories ? "Stop Scan" : "Find Speaker Mic",
                     systemImage: isScanningForAccessories ? "stop.circle" : "dot.radiowaves.left.and.right"
                 )
+            }
+            .disabled(scanner.bluetoothState != .poweredOn)
+            if isSavedAccessoryAvailable {
+                Button("Forget Saved Speaker Mic", role: .destructive) {
+                    scanner.stopScanning()
+                    radioManager.forgetLastSpeakerMic()
+                }
             }
         }
     }

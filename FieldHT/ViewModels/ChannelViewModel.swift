@@ -106,7 +106,7 @@ public class ChannelViewModel: ObservableObject {
         
         hydrationTask = Task {
             do {
-                try await controller.hydrateChannels()
+                try await controller.hydrateChannels(refreshRegionNames: false)
                 
                 if Task.isCancelled { return }
                 
@@ -203,7 +203,7 @@ public class ChannelViewModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
                 
                 // Refresh channels from the radio
-                try await radioController.hydrateChannels()
+                try await radioController.hydrateChannels(refreshRegionNames: false)
                 
                 await MainActor.run {
                     self.isSaving = false
@@ -302,7 +302,7 @@ public class ChannelViewModel: ObservableObject {
         Task {
             do {
                 for ch in toWrite { try await radioController.setChannel(ch) }
-                try await radioController.hydrateChannels()
+                try await radioController.hydrateChannels(refreshRegionNames: false)
                 await MainActor.run { self.loadChannels(); self.isSaving = false }
             } catch {
                 await MainActor.run {
@@ -343,7 +343,7 @@ public class ChannelViewModel: ObservableObject {
                     try await radioController.setChannel(shifted)
                 }
                 try await radioController.setChannel(Channel.empty(channelID: insertionSlotID))
-                try await radioController.hydrateChannels()
+                try await radioController.hydrateChannels(refreshRegionNames: false)
                 await MainActor.run { self.loadChannels(); self.isSaving = false }
             } catch {
                 await MainActor.run {

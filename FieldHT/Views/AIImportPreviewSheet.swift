@@ -10,8 +10,20 @@ import SwiftUI
 struct AIImportPreviewSheet: View {
     let channels: [Channel]
     let onImport: ([Channel]) -> Void
+    var frequencyRanges: DeviceFrequencyRanges? = nil
+
+    private var compatibleChannels: [Channel] {
+        channels.filter { ChannelFrequencyValidator.issues(for: $0, ranges: frequencyRanges).isEmpty }
+    }
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var detailLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: 8))
+    }
 
     var body: some View {
         NavigationStack {
@@ -23,15 +35,21 @@ struct AIImportPreviewSheet: View {
                     )
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    if compatibleChannels.count < channels.count {
+                        Text("Channels with unsupported frequencies are excluded from this import.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
                 }
 
                 Section("Channels") {
                     ForEach(Array(channels.enumerated()), id: \.offset) { _, channel in
+                        let issues = ChannelFrequencyValidator.issues(for: channel, ranges: frequencyRanges)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(channel.name.isEmpty ? "Unnamed" : channel.name)
                                 .font(.headline)
 
-                            HStack {
+                            detailLayout {
                                 Text(String(format: "RX %.4f", channel.rxFreq))
                                     .font(.subheadline)
                                     .monospacedDigit()
@@ -44,7 +62,7 @@ struct AIImportPreviewSheet: View {
                                 }
                             }
 
-                            HStack(spacing: 8) {
+                            detailLayout {
                                 if let tone = channel.txSubAudio, case .frequency(let hz) = tone {
                                     Text(String(format: "Tone %.1f", hz))
                                         .font(.caption)
@@ -66,8 +84,14 @@ struct AIImportPreviewSheet: View {
                                         .foregroundStyle(.red)
                                 }
                             }
+                            ForEach(issues, id: \.self) {
+                                Label($0, systemImage: "exclamationmark.triangle")
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                            }
                         }
                         .padding(.vertical, 2)
+                        .accessibilityElement(children: .combine)
                     }
                 }
             }
@@ -77,11 +101,12 @@ struct AIImportPreviewSheet: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Import \(channels.count)") {
+                    Button("Import \(compatibleChannels.count)") {
                         dismiss()
-                        onImport(channels)
+                        onImport(compatibleChannels)
                     }
                     .fontWeight(.semibold)
+                    .disabled(compatibleChannels.isEmpty)
                 }
             }
         }

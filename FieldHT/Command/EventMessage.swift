@@ -3,7 +3,7 @@ import Foundation
 /// Event message types
 public enum EventMessage {
     case statusChanged(Status)
-    case radioStatusChanged(Status)
+    case radioStatusChanged(FMRadioStatus)
     case channelChanged(Channel)
     case settingsChanged(Settings)
     case beaconSettingsChanged(BeaconSettings)

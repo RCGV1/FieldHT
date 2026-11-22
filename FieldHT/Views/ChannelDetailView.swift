@@ -11,6 +11,10 @@ struct ChannelDetailView: View {
     let channel: Channel
     @ObservedObject var viewModel: ChannelViewModel
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var radioManager: RadioManager
+    @State private var frequencyRanges: DeviceFrequencyRanges?
+    @State private var isLoadingRanges = false
+    @State private var rangeError: String?
     
     @State private var name: String
     @State private var rxFreq: String
@@ -58,55 +62,67 @@ struct ChannelDetailView: View {
     }
     
     var body: some View {
-        NavigationStack {
-            Form {
-                basicInfoSection
-                configurationSection
-                tonesSection
-                flagsSection
-            }
-            .listStyle(.insetGrouped)
-            .navigationTitle("Channel \(channel.channelID + 1)")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        saveChannel()
-                        dismiss()
-                    }
-                    .fontWeight(.semibold)
-                    .disabled(!hasChanges)
+        Form {
+            basicInfoSection
+            configurationSection
+            tonesSection
+            flagsSection
+            if isLoadingRanges { Section { ProgressView("Checking radio frequency support...") } }
+            if let rangeError {
+                Section {
+                    Text(rangeError).foregroundStyle(.red)
+                    Button("Retry Frequency Check") { Task { await loadFrequencyRanges() } }
                 }
             }
-            .scrollDismissesKeyboard(.interactively)
-            .fieldHTKeyboardDismissal()
-            .interactiveDismissDisabled(hasChanges)
-            .alert("Discard Changes?", isPresented: $showDiscardAlert) {
-                Button("Discard", role: .destructive) {
+            if !frequencyIssues.isEmpty {
+                Section("Frequency Check") {
+                    ForEach(frequencyIssues, id: \.self) { Text($0).foregroundStyle(.red) }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Channel \(channel.channelID + 1)")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden()
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") {
+                    if hasChanges { showDiscardAlert = true } else { dismiss() }
+                }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    saveChannel()
                     dismiss()
                 }
-                Button("Keep Editing", role: .cancel) {}
-            } message: {
-                Text("You have unsaved changes.")
+                .fontWeight(.semibold)
+                .disabled(!hasChanges || isLoadingRanges || rangeError != nil || !frequencyIssues.isEmpty)
             }
-            .onChange(of: name) { _, _ in hasChanges = true }
-            .onChange(of: rxFreq) { _, _ in hasChanges = true }
-            .onChange(of: txFreq) { _, _ in hasChanges = true }
-            .onChange(of: txMod) { _, _ in hasChanges = true }
-            .onChange(of: bandwidth) { _, _ in hasChanges = true }
-            .onChange(of: scan) { _, _ in hasChanges = true }
-            .onChange(of: talkAround) { _, _ in hasChanges = true }
-            .onChange(of: txDisable) { _, _ in hasChanges = true }
-            .onChange(of: mute) { _, _ in hasChanges = true }
-            .onChange(of: txPowerHigh) { _, _ in hasChanges = true }
-            .onChange(of: rxSubAudio) { _, _ in hasChanges = true }
-            .onChange(of: txSubAudio) { _, _ in hasChanges = true }
         }
+        .scrollDismissesKeyboard(.interactively)
+        .fieldHTKeyboardDismissal()
+        .interactiveDismissDisabled(hasChanges)
+        .alert("Discard Changes?", isPresented: $showDiscardAlert) {
+            Button("Discard", role: .destructive) {
+                dismiss()
+            }
+            Button("Keep Editing", role: .cancel) {}
+        } message: {
+            Text("You have unsaved changes.")
+        }
+        .onChange(of: name) { _, _ in hasChanges = true }
+        .onChange(of: rxFreq) { _, _ in hasChanges = true }
+        .onChange(of: txFreq) { _, _ in hasChanges = true }
+        .onChange(of: txMod) { _, _ in hasChanges = true }
+        .onChange(of: bandwidth) { _, _ in hasChanges = true }
+        .onChange(of: scan) { _, _ in hasChanges = true }
+        .onChange(of: talkAround) { _, _ in hasChanges = true }
+        .onChange(of: txDisable) { _, _ in hasChanges = true }
+        .onChange(of: mute) { _, _ in hasChanges = true }
+        .onChange(of: txPowerHigh) { _, _ in hasChanges = true }
+        .onChange(of: rxSubAudio) { _, _ in hasChanges = true }
+        .onChange(of: txSubAudio) { _, _ in hasChanges = true }
+        .task { await loadFrequencyRanges() }
     }
     
     private var basicInfoSection: some View {
@@ -282,14 +298,13 @@ struct ChannelDetailView: View {
         return tx != channel.txFreq
     }
     
-    private func saveChannel() {
-        guard let rx = Double(rxFreq), let tx = Double(txFreq) else { return }
-        
-        let updatedChannel = Channel(
+    private var editedChannel: Channel? {
+        guard let rx = Double(rxFreq), let tx = Double(txFreq) else { return nil }
+        return Channel(
             channelID: channel.channelID,
             txMod: txMod,
             txFreq: tx,
-            rxMod: txMod,
+            rxMod: txMod == channel.txMod ? channel.rxMod : txMod,
             rxFreq: rx,
             txSubAudio: txSubAudio,
             rxSubAudio: rxSubAudio,
@@ -307,8 +322,25 @@ struct ChannelDetailView: View {
             mute: mute,
             name: name
         )
-        
-        viewModel.updateChannel(updatedChannel)
+    }
+
+    private var frequencyIssues: [String] {
+        guard let editedChannel else { return ["Enter valid RX and TX frequencies in MHz."] }
+        return ChannelFrequencyValidator.issues(for: editedChannel, ranges: frequencyRanges)
+    }
+
+    private func loadFrequencyRanges() async {
+        guard let controller = radioManager.radioController, controller.isConnected, controller.deviceInfo.frequencyRangeCount > 0 else { return }
+        isLoadingRanges = true
+        rangeError = nil
+        defer { isLoadingRanges = false }
+        do { frequencyRanges = try await controller.getFrequencyRanges() }
+        catch { if !Task.isCancelled { rangeError = "Unable to check this radio's supported frequencies: \(error.localizedDescription)" } }
+    }
+
+    private func saveChannel() {
+        guard let editedChannel, frequencyIssues.isEmpty, rangeError == nil else { return }
+        viewModel.updateChannel(editedChannel)
         hasChanges = false
     }
     
@@ -361,8 +393,18 @@ struct ChannelDetailView: View {
                 await MainActor.run {
                     isAutofilling = false
                     
-                    guard let firstResult = results.first else {
-                        autofillError = "No repeater found for \(callsign)"
+                    let compatibleResults = results.filter { result in
+                        guard let rx = result.frequencyMHz else { return false }
+                        var candidate = channel
+                        candidate.rxFreq = rx
+                        candidate.txFreq = result.inputFreqMHz ?? rx
+                        candidate.rxMod = .fm
+                        candidate.txMod = .fm
+                        candidate.txDisable = txDisable
+                        return ChannelFrequencyValidator.issues(for: candidate, ranges: frequencyRanges).isEmpty
+                    }
+                    guard let firstResult = compatibleResults.first else {
+                        autofillError = results.isEmpty ? "No repeater found for \(callsign)" : "No compatible repeater frequencies found for this radio."
                         return
                     }
                     
@@ -389,8 +431,8 @@ struct ChannelDetailView: View {
                         name = callsign
                     }
                     
-                    if results.count > 1 {
-                        autofillError = "Found \(results.count) repeaters, using first result"
+                    if compatibleResults.count > 1 {
+                        autofillError = "Found \(compatibleResults.count) compatible repeaters, using first result"
                     }
                     hasChanges = true
                 }

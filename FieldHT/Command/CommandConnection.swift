@@ -8,9 +8,11 @@ public class CommandConnection: BLEConnectionDelegate {
     private struct PendingReply {
         let id: UUID
         let continuation: CheckedContinuation<RadioMessage, Error>
+        let raw: Bool
     }
 
     private let bleConnection: BLEConnection
+    public var onTransportDisconnect: ((Error?) -> Void)?
     private var eventHandlers: [UUID: EventHandler] = [:]
     private var pendingReplies: [UInt16: PendingReply] = [:]
     private let replySequencer = AsyncSemaphore(value: 1)
@@ -139,6 +141,7 @@ public class CommandConnection: BLEConnectionDelegate {
     }
     
     public func connectionDidDisconnect(_ connection: BLEConnection, error: Error?) {
+        onTransportDisconnect?(error)
         // Handle disconnection
         queue.async {
             for (_, pendingReply) in self.pendingReplies {
@@ -176,8 +179,12 @@ public class CommandConnection: BLEConnectionDelegate {
                 if let pendingReply = pendingReplies[message.command] {
                     pendingReplies.removeValue(forKey: message.command)
 
-                    let reply = try decodeReply(message: message)
-                    pendingReply.continuation.resume(returning: .reply(reply))
+                    do {
+                        let reply: RadioMessage = pendingReply.raw ? .rawReply(message) : .reply(try decodeReply(message: message))
+                        pendingReply.continuation.resume(returning: reply)
+                    } catch {
+                        pendingReply.continuation.resume(throwing: error)
+                    }
                 } else {
                     if handleUnsolicitedReply(message) {
                         return
@@ -354,6 +361,23 @@ public class CommandConnection: BLEConnectionDelegate {
     
     private func decodeReply(message: ProtocolMessage) throws -> ReplyMessage {
         switch (message.commandGroup, message.command) {
+        case (.basic, BasicCommand.radioGetStatus.rawValue):
+            let status = try decodeReplyStatus(message.body)
+            guard status == .success else { return .error(status, "Failed to read FM radio status") }
+            return .fmRadioStatus(try RadioMaintenanceCodec.decodeFMStatus(Data(message.body.dropFirst())))
+
+        case (.basic, BasicCommand.getTrustedDevice.rawValue):
+            let status = try decodeReplyStatus(message.body)
+            if status == .invalidParameter { return .trustedDevice(nil) }
+            guard status == .success else { return .error(status, "Failed to read Bluetooth pairings") }
+            return .trustedDevice(try RadioMaintenanceCodec.decodeTrustedDevice(Data(message.body.dropFirst())))
+
+        case (.basic, BasicCommand.deleteTrustedDevice.rawValue),
+             (.basic, BasicCommand.radioSetFreq.rawValue),
+             (.basic, BasicCommand.radioSeekUp.rawValue),
+             (.basic, BasicCommand.radioSeekDown.rawValue):
+            let status = try decodeReplyStatus(message.body)
+            return status == .success ? .success : .error(status, "Radio command failed")
         case (.basic, BasicCommand.freqModeGetStatus.rawValue):
             let replyStatus = try decodeReplyStatus(message.body)
             guard replyStatus == .success else {
@@ -670,7 +694,7 @@ public class CommandConnection: BLEConnectionDelegate {
             return .statusChanged(status)
 
         case .radioStatusChanged:
-            let status = try ProtocolDecoder.decodeStatus(eventData)
+            let status = try RadioMaintenanceCodec.decodeFMStatus(eventData)
             return .radioStatusChanged(status)
             
         case .htChChanged:
@@ -721,7 +745,8 @@ public class CommandConnection: BLEConnectionDelegate {
         commandGroup: CommandGroup,
         command: UInt16,
         body: Data,
-        timeout: TimeInterval = 5.0
+        timeout: TimeInterval = 5.0,
+        raw: Bool = false
     ) async throws -> RadioMessage {
         return try await replySequencer.withPermit {
             let requestID = UUID()
@@ -735,7 +760,7 @@ public class CommandConnection: BLEConnectionDelegate {
                         existing.continuation.resume(throwing: CancellationError())
                     }
 
-                    self.pendingReplies[command] = PendingReply(id: requestID, continuation: continuation)
+                    self.pendingReplies[command] = PendingReply(id: requestID, continuation: continuation, raw: raw)
 
                     let messageData = ProtocolEncoder.encodeMessage(
                         commandGroup: commandGroup,
@@ -891,6 +916,80 @@ public class CommandConnection: BLEConnectionDelegate {
         }
     }
 
+
+    public func getFMRadioStatus() async throws -> FMRadioStatus {
+        let reply = try await sendCommandAndWaitForReply(commandGroup: .basic, command: BasicCommand.radioGetStatus.rawValue, body: Data([0]))
+        if case .reply(.fmRadioStatus(let status)) = reply { return status }
+        try requireSuccess(reply)
+        throw ProtocolError.invalidReply
+    }
+
+    public func tuneFMRadio(_ frequencyMHz: Double) async throws {
+        let reply = try await sendCommandAndWaitForReply(commandGroup: .basic, command: BasicCommand.radioSetFreq.rawValue, body: RadioMaintenanceCodec.encodeFMFrequency(frequencyMHz))
+        try requireSuccess(reply)
+    }
+
+    public func seekFMRadio(up: Bool) async throws {
+        let command = up ? BasicCommand.radioSeekUp : .radioSeekDown
+        let reply = try await sendCommandAndWaitForReply(commandGroup: .basic, command: command.rawValue, body: Data([0]))
+        try requireSuccess(reply)
+    }
+
+    public func getTrustedDevices() async throws -> [TrustedBluetoothDevice] {
+        var devices: [TrustedBluetoothDevice] = []
+        for index in 0...255 {
+            try Task.checkCancellation()
+            let reply = try await sendCommandAndWaitForReply(commandGroup: .basic, command: BasicCommand.getTrustedDevice.rawValue, body: Data([UInt8(index)]))
+            guard case .reply(.trustedDevice(let device)) = reply else {
+                try requireSuccess(reply)
+                throw ProtocolError.invalidReply
+            }
+            guard let device else { return devices }
+            guard device.index == index, !devices.contains(where: { $0.address == device.address }) else { throw ProtocolError.invalidReply }
+            devices.append(device)
+        }
+        return devices
+    }
+
+    public func deleteTrustedDevice(_ address: Data) async throws {
+        guard address.count == 6 else { throw RadioMaintenanceError.invalidPayload }
+        let reply = try await sendCommandAndWaitForReply(commandGroup: .basic, command: BasicCommand.deleteTrustedDevice.rawValue, body: address)
+        try requireSuccess(reply)
+    }
+
+    public func readSettingsPayload() async throws -> Data {
+        try await readPayload(.readSettings, body: Data())
+    }
+
+    public func readBeaconSettingsPayload() async throws -> Data {
+        try await readPayload(.readBSSSettings, body: Data([2]))
+    }
+
+    private func readPayload(_ command: BasicCommand, body: Data) async throws -> Data {
+        let reply = try await sendCommandAndWaitForReply(commandGroup: .basic, command: command.rawValue, body: body, raw: true)
+        guard case .rawReply(let message) = reply else { throw ProtocolError.invalidReply }
+        let status = try decodeReplyStatus(message.body)
+        guard status == .success else { throw ProtocolError.commandFailed(status, "Failed to read radio backup data") }
+        return Data(message.body.dropFirst())
+    }
+
+    public func writeSettingsPayload(_ payload: Data) async throws {
+        _ = try ProtocolDecoder.decodeSettings(payload)
+        let reply = try await sendCommandAndWaitForReply(commandGroup: .basic, command: BasicCommand.writeSettings.rawValue, body: payload)
+        try requireSuccess(reply)
+    }
+
+    public func writeBeaconSettingsPayload(_ payload: Data) async throws {
+        _ = try ProtocolDecoder.decodeBeaconSettings(payload)
+        let reply = try await sendCommandAndWaitForReply(commandGroup: .basic, command: BasicCommand.writeBSSSettings.rawValue, body: payload)
+        try requireSuccess(reply)
+    }
+
+    private func requireSuccess(_ reply: RadioMessage) throws {
+        if case .reply(.success) = reply { return }
+        if case .reply(.error(let status, let message)) = reply { throw ProtocolError.commandFailed(status, message) }
+        throw ProtocolError.invalidReply
+    }
 
     public func setRadioMode(_ mode: Int) async throws {
         let body = ProtocolEncoder.encodeRadioSetMode(mode)
@@ -1320,39 +1419,6 @@ public class CommandConnection: BLEConnectionDelegate {
                 throw ProtocolError.commandFailed(status, message)
             }
             throw ProtocolError.invalidReply
-        }
-    }
-}
-
-/// Protocol errors
-public enum ProtocolError: LocalizedError {
-    case notImplemented
-    case decodeError(String)
-    case invalidMessage
-    case invalidReply
-    case timeout
-    case commandFailed(ReplyStatus, String)
-    case invalidCommandGroup
-    case invalidPowerStatusType
-    
-    public var errorDescription: String? {
-        switch self {
-        case .notImplemented:
-            return "Protocol decoder not fully implemented"
-        case .decodeError(let message):
-            return "Failed to decode message: \(message)"
-        case .invalidMessage:
-            return "Invalid message format"
-        case .invalidReply:
-            return "Invalid reply format"
-        case .timeout:
-            return "Command timed out"
-        case .commandFailed(let status, let message):
-            return "Command failed: \(status) - \(message)"
-        case .invalidCommandGroup:
-            return "Invalid command group"
-        case .invalidPowerStatusType:
-            return "Invalid power status type"
         }
     }
 }

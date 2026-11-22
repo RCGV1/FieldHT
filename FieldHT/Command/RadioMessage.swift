@@ -4,6 +4,7 @@ import Foundation
 public enum RadioMessage {
     case reply(ReplyMessage)
     case event(EventMessage)
+    case rawReply(ProtocolMessage)
 }
 
 /// Operating modes carried by the UV-PRO frequency-mode command.
@@ -89,6 +90,8 @@ public struct DeviceFrequencyRanges: Sendable, Equatable {
 
 /// Reply message types
 public enum ReplyMessage {
+    case fmRadioStatus(FMRadioStatus)
+    case trustedDevice(TrustedBluetoothDevice?)
     case deviceInfo(DeviceInfo)
     case channel(Channel)
     case settings(Settings)

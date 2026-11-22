@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var radioManager: RadioManager
     @StateObject private var viewModel = SettingsViewModel()
+    @AppStorage(RepeaterBookService.apiTokenDefaultsKey) private var repeaterBookAPIToken = ""
 
     var body: some View {
         Group {
@@ -82,9 +83,25 @@ struct SettingsView: View {
             }
 
             Section {
-                SupportDeveloperRow()
+                SecureField("API token", text: $repeaterBookAPIToken)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                if !repeaterBookAPIToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button(role: .destructive) {
+                        repeaterBookAPIToken = ""
+                    } label: {
+                        Label("Clear RepeaterBook Token", systemImage: "trash")
+                    }
+                }
+
+                Link(destination: URL(string: "https://www.repeaterbook.com/user/api_apps.php")!) {
+                    Label("Manage RepeaterBook API Tokens", systemImage: "key")
+                }
             } header: {
-                Label("Support", systemImage: "heart")
+                Label("RepeaterBook", systemImage: "antenna.radiowaves.left.and.right")
+            } footer: {
+                Text("RepeaterBook now requires an approved app-bound API token for lookups. FieldHT stores this token locally and sends it only as the RepeaterBook API token header.")
             }
         }
         .disabled(viewModel.isSaving)
@@ -99,6 +116,12 @@ private struct RadioSetupSettingsView: View {
         Form {
             Section {
                 if let radioController = radioManager.radioController {
+                    NavigationLink {
+                        RadioToolsView(controller: radioController)
+                    } label: {
+                        Label("Radio Tools", systemImage: "wrench.adjustable")
+                    }
+
                     NavigationLink {
                         RadioControlCustomizationView()
                     } label: {
@@ -361,7 +384,11 @@ private struct AdvancedSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Auto Relay", isOn: Binding(get: { viewModel.settings?.autoRelayEn ?? false }, set: viewModel.updateAutoRelayEn))
+                Toggle("Audio Relay", isOn: Binding(get: { viewModel.settings?.autoRelayEn ?? false }, set: viewModel.updateAutoRelayEn))
+                    .disabled(viewModel.isSaving || viewModel.settings == nil)
+                Text("Changes the radio's Audio Relay setting. It does not connect phone audio or a Bluetooth microphone.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
                 Toggle("Keep Headset Connected", isOn: Binding(get: { viewModel.settings?.keepAghfpLink ?? false }, set: viewModel.updateKeepAghfpLink))
                 Toggle("Disable Key and Operation Tones", isOn: Binding(get: { viewModel.settings?.disTone ?? false }, set: viewModel.updateDisTone))
                 Toggle("Use Freq Range 2", isOn: Binding(get: { viewModel.settings?.useFreqRange2 ?? false }, set: viewModel.updateUseFreqRange2))

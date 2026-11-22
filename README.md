@@ -18,6 +18,13 @@ Built entirely in SwiftUI, FieldHT gives you full radio control from your iPhone
 - **Power** — auto power on/off, power saving mode, screen timeout
 - **Programmable buttons** — configure all 6 PF button actions
 
+### Radio Tools
+- **FM broadcast radio**: tune, seek, and save station presets; audio plays on the radio or its accessory
+- **Bluetooth pairings**: inspect and remove devices saved on the radio
+- **Firmware checks**: view stable firmware releases and notes from the manufacturer
+- **Backup and restore**: export memory groups, VFOs, settings, and buttons to a JSON file; restore checks compatibility and verifies writes
+- **Frequency validation**: check channel edits, RepeaterBook autofill, and imports against radio-reported receive and transmit bands
+
 ### APRS / Packet Beaconing
 - Configure beacon interval, callsign, symbol, and message
 - Auto-share position to a selected channel

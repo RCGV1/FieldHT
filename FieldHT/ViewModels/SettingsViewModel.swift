@@ -68,6 +68,7 @@ public class SettingsViewModel: ObservableObject {
         saveTask?.cancel()
         saveTask = nil
         pendingSettings = nil
+        isSaving = false
         pfLoadTask?.cancel()
         pfSaveTask?.cancel()
         eventHandler?()
@@ -181,7 +182,7 @@ public class SettingsViewModel: ObservableObject {
     }
 
     private func flushPendingSettings(using radioController: RadioController) async {
-        while let nextSettings = pendingSettings {
+        while !Task.isCancelled, self.radioController === radioController, let nextSettings = pendingSettings {
             pendingSettings = nil
             isSaving = true
             errorMessage = nil
@@ -205,8 +206,10 @@ public class SettingsViewModel: ObservableObject {
             }
         }
 
-        isSaving = false
-        saveTask = nil
+        if self.radioController === radioController {
+            isSaving = false
+            saveTask = nil
+        }
     }
     
     /// Update channelA
@@ -289,7 +292,7 @@ public class SettingsViewModel: ObservableObject {
     /// Update screenTimeout
     public func updateScreenTimeout(_ value: Int) {
         guard var current = settings else { return }
-        current.screenTimeout = value
+        current.screenTimeout = Settings.clampedScreenTimeout(value)
         updateSettings(current)
     }
     
@@ -302,9 +305,28 @@ public class SettingsViewModel: ObservableObject {
     
     /// Update autoRelayEn
     public func updateAutoRelayEn(_ value: Bool) {
-        guard var current = settings else { return }
-        current.autoRelayEn = value
-        updateSettings(current)
+        guard let controller = radioController, settings != nil, !isSaving, saveTask == nil else { return }
+        isSaving = true
+        errorMessage = nil
+        saveTask = Task { [weak self, weak controller] in
+            guard let self, let controller else { return }
+            var relayError: String?
+            do {
+                let confirmed = try await controller.setAudioRelayEnabled(value)
+                guard !Task.isCancelled, self.radioController === controller else { return }
+                self.settings = confirmed
+            } catch {
+                guard !Task.isCancelled, self.radioController === controller else { return }
+                relayError = error.localizedDescription
+                self.settings = controller.settings
+            }
+            if var pending = self.pendingSettings {
+                pending.autoRelayEn = controller.settings.autoRelayEn
+                self.pendingSettings = pending
+            }
+            await self.flushPendingSettings(using: controller)
+            if let relayError { self.errorMessage = relayError }
+        }
     }
     
     /// Update autoPowerOn

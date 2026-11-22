@@ -3,12 +3,13 @@
 //  FieldHT
 //
 //  Shared "no radio connected" screen shown in Radio Control and Settings.
-//  Previews the app's feature set and surfaces the support link.
+//  Previews the app's feature set before a radio is connected.
 //
 
 import SwiftUI
 
 struct NotConnectedView: View {
+    @EnvironmentObject private var radioManager: RadioManager
 
     private struct Feature: Identifiable {
         let id = UUID()
@@ -43,11 +44,26 @@ struct NotConnectedView: View {
         ScrollView {
             VStack(spacing: 28) {
                 heroSection
+                if radioManager.isConnecting || radioManager.isAutoReconnecting {
+                    VStack(spacing: 12) {
+                        ProgressView(radioManager.isAutoReconnecting ? "Reconnecting to saved radio..." : "Connecting to radio...")
+                        Button("Cancel Connection", role: .cancel) { radioManager.cancelRadioConnection() }
+                            .buttonStyle(.bordered)
+                        Text("You can cancel without forgetting the radio. Use the Connect tab to choose another device.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity)
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+                } else if radioManager.isRadioReconnectPaused {
+                    Label("Connection attempts paused. Open Connect to retry or choose another radio.", systemImage: "pause.circle")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
                 featuresGrid
                 connectHint
-                Divider()
-                    .padding(.horizontal)
-                supportCard
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 28)
@@ -134,19 +150,12 @@ struct NotConnectedView: View {
         .padding(.vertical, 4)
     }
 
-    // MARK: - Support Card
-
-    private var supportCard: some View {
-        SupportDeveloperRow()
-            .padding(14)
-            .background(Color(.secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
 }
 
 #Preview {
     NavigationStack {
         NotConnectedView()
             .navigationTitle("Radio Control")
+            .environmentObject(RadioManager(restoreSavedRadio: false))
     }
 }

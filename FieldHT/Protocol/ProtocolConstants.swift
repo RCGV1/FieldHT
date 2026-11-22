@@ -33,6 +33,8 @@ public enum BasicCommand: UInt16 {
     case writeSettings = 11
     case readRFCh = 13
     case writeRFCh = 14
+    case getTrustedDevice = 18
+    case deleteTrustedDevice = 19
     case getHTStatus = 20
     case setHTOnOff = 21
     case getVolume = 22

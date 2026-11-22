@@ -14,6 +14,8 @@ public protocol BLEConnectionDelegate: AnyObject {
 public enum BLEError: LocalizedError {
     case notConnected
     case bluetoothUnavailable
+    case bluetoothPoweredOff
+    case bluetoothUnauthorized
     case connectionFailed
     case connectionTimeout
     case serviceNotFound
@@ -25,6 +27,10 @@ public enum BLEError: LocalizedError {
             return "Not connected to device"
         case .bluetoothUnavailable:
             return "Bluetooth is unavailable"
+        case .bluetoothPoweredOff:
+            return "Bluetooth is off. Turn it on to reconnect to your radio."
+        case .bluetoothUnauthorized:
+            return "Bluetooth access is denied. Allow FieldHT to use Bluetooth in Settings."
         case .connectionFailed:
             return "Connection failed"
         case .connectionTimeout:
@@ -61,6 +67,7 @@ public class BLEConnection: NSObject {
 
     private var connectContinuation: CheckedContinuation<Void, Error>?
     private var disconnectContinuation: CheckedContinuation<Void, Never>?
+    private var disconnectWaiters: [CheckedContinuation<Void, Never>] = []
 
     private var connectTimeoutTask: Task<Void, Never>?
     private var disconnectTimeoutTask: Task<Void, Never>?
@@ -68,6 +75,10 @@ public class BLEConnection: NSObject {
     private var didReachReadyState: Bool = false
     private let restoreIdentifier: String
     private let stateRestorationEnabled: Bool
+    private let connectionTimeout: TimeInterval
+    private let bluetoothStartupTimeout: TimeInterval
+    private var didStartConnectFlow = false
+    private var connectAttemptID: UUID?
 
     private var restorePendingServiceDiscovery: Bool = false
     private var isDiscoveringServices: Bool = false
@@ -83,19 +94,24 @@ public class BLEConnection: NSObject {
     }
 
     public var isConnected: Bool {
+        didReachReadyState &&
         peripheral?.state == .connected &&
         writeCharacteristic != nil &&
-        indicateCharacteristic != nil
+        indicateCharacteristic?.isNotifying == true
     }
 
     public init(
         deviceUUID: UUID,
         radioManager: RadioManager? = nil,
-        enableStateRestoration: Bool = true
+        enableStateRestoration: Bool = true,
+        connectionTimeout: TimeInterval = 20,
+        bluetoothStartupTimeout: TimeInterval = 30
     ) {
         self.deviceUUID = deviceUUID
         self.restoreIdentifier = "com.fieldHT.ble.\(deviceUUID.uuidString)"
         self.stateRestorationEnabled = enableStateRestoration
+        self.connectionTimeout = connectionTimeout
+        self.bluetoothStartupTimeout = bluetoothStartupTimeout
         self.radioManager = radioManager
         super.init()
 
@@ -114,18 +130,26 @@ public class BLEConnection: NSObject {
     // MARK: - Public API
 
     public func connect() async throws {
+        try Task.checkCancellation()
         if isConnected {
             return
         }
+        let attemptID = UUID()
         try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
                 // Only one connect attempt at a time.
                 if self.connectContinuation != nil {
                     self.cancelPendingConnect()
                 }
 
+                self.connectAttemptID = attemptID
                 self.didRequestDisconnect = false
                 self.didReachReadyState = false
+                self.didStartConnectFlow = false
                 self.connectAttemptStartedAt = Date()
                 self.lastConnectedAt = nil
                 self.serviceDiscoveryStartedAt = nil
@@ -134,17 +158,22 @@ public class BLEConnection: NSObject {
                     "device_uuid": self.deviceUUID.uuidString
                 ])
                 self.connectContinuation = continuation
-                self.startConnectTimeout(seconds: 20)
+                self.startConnectTimeout(seconds: self.bluetoothStartupTimeout)
                 self.beginConnectFlowIfPossible()
             }
         } onCancel: {
             Task { @MainActor [weak self] in
+                guard self?.connectAttemptID == attemptID else { return }
                 self?.cancelPendingConnect()
             }
         }
     }
 
     public func disconnect() async {
+        if disconnectContinuation != nil {
+            await withCheckedContinuation { disconnectWaiters.append($0) }
+            return
+        }
         // If a connect is in-flight, cancel it first so callers aren't left hanging.
         if connectContinuation != nil {
             cancelPendingConnect()
@@ -159,7 +188,7 @@ public class BLEConnection: NSObject {
             }
 
             if let peripheral = self.peripheral {
-                if canIssueCentralCommands {
+                if canIssueCentralCommands, peripheral.state != .disconnecting, peripheral.state != .disconnected {
                     centralManager.cancelPeripheralConnection(peripheral)
                 }
                 if peripheral.state == .disconnected {
@@ -173,8 +202,8 @@ public class BLEConnection: NSObject {
     }
 
     public func send(_ data: Data) throws {
-        guard let writeCharacteristic else {
-            print("BLE: Attempted to send data but writeCharacteristic is nil")
+        guard isConnected, let writeCharacteristic, let peripheral else {
+            print("BLE: Attempted to send data before the transport was ready")
             throw BLEError.notConnected
         }
         let hex = data.map { String(format: "%02hhx", $0) }.joined()
@@ -190,7 +219,7 @@ public class BLEConnection: NSObject {
             }
         }
 
-        peripheral?.writeValue(data, for: writeCharacteristic, type: .withResponse)
+        peripheral.writeValue(data, for: writeCharacteristic, type: .withResponse)
     }
     
     // MARK: - Private Helper
@@ -221,7 +250,9 @@ public class BLEConnection: NSObject {
         writeCharacteristic = nil
         indicateCharacteristic = nil
         auxCharacteristic = nil
+        connectAttemptID = nil
         didReachReadyState = false
+        didStartConnectFlow = false
         didRequestDisconnect = false
 
         restorePendingServiceDiscovery = false
@@ -265,6 +296,9 @@ public class BLEConnection: NSObject {
 
         switch centralManager.state {
         case .poweredOn:
+            guard !didStartConnectFlow else { return }
+            didStartConnectFlow = true
+            startConnectTimeout(seconds: connectionTimeout)
             let peripherals = centralManager.retrievePeripherals(withIdentifiers: [deviceUUID])
             if let peripheral = peripherals.first {
                 self.peripheral = peripheral
@@ -298,8 +332,10 @@ public class BLEConnection: NSObject {
             // reconnect alive instead of incorrectly reporting Bluetooth unavailable.
             return
 
-        case .poweredOff, .unauthorized:
-            failConnect(BLEError.bluetoothUnavailable)
+        case .poweredOff:
+            failConnect(BLEError.bluetoothPoweredOff)
+        case .unauthorized:
+            failConnect(BLEError.bluetoothUnauthorized)
 
         @unknown default:
             break
@@ -335,20 +371,12 @@ public class BLEConnection: NSObject {
         connectTimeoutTask?.cancel()
         connectTimeoutTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-            guard self.connectContinuation != nil else { return }
-            if self.peripheral?.state == .connected || self.didReachReadyState {
-                return
-            }
+            do { try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }
+            catch { return }
+            guard !Task.isCancelled, self.connectContinuation != nil, !self.didReachReadyState else { return }
             print("BLE: Connect timed out after \(seconds)s")
             self.recordCaptureNote(category: "connect_timeout", message: "BLE connect timed out", fields: ["seconds": String(seconds)])
-            if self.canIssueCentralCommands {
-                self.centralManager.stopScan()
-                if let peripheral = self.peripheral {
-                    self.centralManager.cancelPeripheralConnection(peripheral)
-                }
-            }
-            self.failConnect(BLEError.connectionTimeout)
+            self.failConnect(self.didStartConnectFlow ? BLEError.connectionTimeout : BLEError.bluetoothUnavailable)
         }
     }
 
@@ -356,8 +384,9 @@ public class BLEConnection: NSObject {
         disconnectTimeoutTask?.cancel()
         disconnectTimeoutTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-            guard self.disconnectContinuation != nil else { return }
+            do { try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }
+            catch { return }
+            guard !Task.isCancelled, self.disconnectContinuation != nil else { return }
             print("BLE: Disconnect timed out after \(seconds)s")
             self.finishDisconnect()
         }
@@ -365,23 +394,57 @@ public class BLEConnection: NSObject {
 
     private func cancelPendingConnect() {
         guard connectContinuation != nil else { return }
-        if canIssueCentralCommands {
-            centralManager.stopScan()
-            if let peripheral {
-                centralManager.cancelPeripheralConnection(peripheral)
-            }
-        }
         failConnect(CancellationError())
     }
 
     private func failConnect(_ error: Error) {
+        let wasReady = didReachReadyState
+        let wasRequested = didRequestDisconnect
         connectTimeoutTask?.cancel()
         connectTimeoutTask = nil
 
         let continuation = connectContinuation
         connectContinuation = nil
+        let disconnect = disconnectContinuation
+        disconnectContinuation = nil
+        let waiters = disconnectWaiters
+        disconnectWaiters.removeAll()
+        if canIssueCentralCommands {
+            centralManager.stopScan()
+            if let peripheral, peripheral.state != .disconnected, peripheral.state != .disconnecting {
+                centralManager.cancelPeripheralConnection(peripheral)
+            }
+        }
         resetConnectionState()
         continuation?.resume(throwing: error)
+        disconnect?.resume()
+        waiters.forEach { $0.resume() }
+        if wasReady && !wasRequested {
+            delegate?.connectionDidDisconnect(self, error: error)
+            notifyRadioManagerTransportDidDisconnect(error: error)
+        }
+    }
+
+    private func completeConnectIfReady() {
+        guard !didReachReadyState,
+              let peripheral, peripheral.state == .connected,
+              writeCharacteristic != nil,
+              indicateCharacteristic?.isNotifying == true else { return }
+
+        recordCaptureNote(category: "connect_ready", message: "BLE transport ready", fields: [
+            "device_uuid": peripheral.identifier.uuidString,
+            "total_ms": millisecondsSince(connectAttemptStartedAt),
+            "service_ms": millisecondsSince(serviceDiscoveryStartedAt),
+            "characteristic_ms": millisecondsSince(characteristicDiscoveryStartedAt)
+        ])
+        connectTimeoutTask?.cancel()
+        connectTimeoutTask = nil
+        connectAttemptID = nil
+        didReachReadyState = true
+        let continuation = connectContinuation
+        connectContinuation = nil
+        continuation?.resume()
+        delegate?.connectionDidConnect(self)
     }
 
     private func finishDisconnect() {
@@ -390,8 +453,11 @@ public class BLEConnection: NSObject {
 
         let continuation = disconnectContinuation
         disconnectContinuation = nil
+        let waiters = disconnectWaiters
+        disconnectWaiters.removeAll()
         resetConnectionState()
         continuation?.resume()
+        waiters.forEach { $0.resume() }
     }
 
     private func notifyRadioManagerTransportDidDisconnect(error: Error?) {
@@ -414,20 +480,19 @@ extension BLEConnection: CBCentralManagerDelegate {
             if restorePendingServiceDiscovery {
                 startServiceDiscoveryIfPossible()
             }
+            radioManager?.handleTransportBluetoothAvailable()
 
-        case .poweredOff, .unauthorized:
-            if connectContinuation != nil {
-                failConnect(BLEError.bluetoothUnavailable)
-            }
+        case .poweredOff:
+            radioManager?.handleTransportBluetoothUnavailable()
+            if connectContinuation != nil || didReachReadyState { failConnect(BLEError.bluetoothPoweredOff) }
+        case .unauthorized:
+            radioManager?.handleTransportBluetoothUnavailable()
+            if connectContinuation != nil || didReachReadyState { failConnect(BLEError.bluetoothUnauthorized) }
 
-            // Only treat this as a transport drop if we had reached a usable connection.
-            if didReachReadyState {
-                delegate?.connectionDidDisconnect(self, error: BLEError.bluetoothUnavailable)
-                notifyRadioManagerTransportDidDisconnect(error: BLEError.bluetoothUnavailable)
-                resetConnectionState()
-            }
-
-        case .resetting, .unknown, .unsupported:
+        case .resetting:
+            radioManager?.handleTransportBluetoothUnavailable()
+            if didReachReadyState || didStartConnectFlow { failConnect(BLEError.bluetoothUnavailable) }
+        case .unknown, .unsupported:
             // CoreBluetooth commonly enters these transitional states while creating a
             // new central manager. Keep an in-flight reconnect alive until its state
             // becomes definitive instead of reporting a false Bluetooth failure.
@@ -470,7 +535,7 @@ extension BLEConnection: CBCentralManagerDelegate {
         advertisementData: [String: Any],
         rssi RSSI: NSNumber
     ) {
-        guard peripheral.identifier == deviceUUID else { return }
+        guard connectContinuation != nil, peripheral.identifier == deviceUUID else { return }
 
         print("BLE: discovered target peripheral \(peripheral.identifier.uuidString) rssi=\(RSSI)")
         recordCaptureNote(category: "discover", message: "Discovered target peripheral", fields: [
@@ -489,11 +554,10 @@ extension BLEConnection: CBCentralManagerDelegate {
         _ central: CBCentralManager,
         didConnect peripheral: CBPeripheral
     ) {
+        guard peripheral === self.peripheral else { return }
         print("BLE: didConnect peripheral \(peripheral.identifier.uuidString)")
         lastConnectedAt = Date()
         recordCaptureNote(category: "connect", message: "Connected peripheral", fields: ["peripheral": peripheral.identifier.uuidString])
-        connectTimeoutTask?.cancel()
-        connectTimeoutTask = nil
         startServiceDiscoveryIfPossible()
     }
 
@@ -502,6 +566,7 @@ extension BLEConnection: CBCentralManagerDelegate {
         didFailToConnect peripheral: CBPeripheral,
         error: Error?
     ) {
+        guard peripheral === self.peripheral else { return }
         print("BLE: didFailToConnect peripheral \(peripheral.identifier.uuidString) error=\(error?.localizedDescription ?? "nil")")
         recordCaptureNote(category: "connect_failed", message: "Failed to connect peripheral", fields: [
             "peripheral": peripheral.identifier.uuidString,
@@ -516,6 +581,7 @@ extension BLEConnection: CBCentralManagerDelegate {
         didDisconnectPeripheral peripheral: CBPeripheral,
         error: Error?
     ) {
+        guard peripheral === self.peripheral, peripheral.state == .disconnected else { return }
         let wasRequested = didRequestDisconnect
         let wasReady = didReachReadyState
 
@@ -566,6 +632,7 @@ extension BLEConnection: CBPeripheralDelegate {
         _ peripheral: CBPeripheral,
         didDiscoverServices error: Error?
     ) {
+        guard peripheral === self.peripheral else { return }
         isDiscoveringServices = false
         if let error = error {
             print("BLE: Error discovering services: \(error.localizedDescription)")
@@ -611,6 +678,7 @@ extension BLEConnection: CBPeripheralDelegate {
         didDiscoverCharacteristicsFor service: CBService,
         error: Error?
     ) {
+        guard peripheral === self.peripheral else { return }
         if let error {
             print("BLE: Error discovering characteristics for service \(service.uuid): \(error.localizedDescription)")
             recordCaptureNote(category: "discover_characteristics_error", message: "Characteristic discovery failed", fields: [
@@ -661,22 +729,8 @@ extension BLEConnection: CBPeripheralDelegate {
         }
 
         if writeCharacteristic != nil && indicateCharacteristic != nil {
-            print("BLE: All required characteristics found. Connection complete.")
-            recordCaptureNote(category: "connect_ready", message: "BLE transport ready", fields: [
-                "device_uuid": peripheral.identifier.uuidString,
-                "total_ms": millisecondsSince(connectAttemptStartedAt),
-                "service_ms": millisecondsSince(serviceDiscoveryStartedAt),
-                "characteristic_ms": millisecondsSince(characteristicDiscoveryStartedAt)
-            ])
-            connectTimeoutTask?.cancel()
-            connectTimeoutTask = nil
-            didReachReadyState = true
-
-            if let continuation = connectContinuation {
-                connectContinuation = nil
-                continuation.resume()
-            }
-            delegate?.connectionDidConnect(self)
+            print("BLE: Required characteristics found; waiting for radio notifications.")
+            completeConnectIfReady()
         } else {
              print("BLE: Missing characteristics. Write found: \(writeCharacteristic != nil), Indicate found: \(indicateCharacteristic != nil)")
              failConnect(BLEError.characteristicNotFound)
@@ -688,6 +742,7 @@ extension BLEConnection: CBPeripheralDelegate {
         didUpdateValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
+        guard peripheral === self.peripheral else { return }
         if let error = error {
              print("BLE: Error updating value for char \(characteristicLabel(characteristic)): \(error.localizedDescription)")
              return
@@ -717,6 +772,7 @@ extension BLEConnection: CBPeripheralDelegate {
         didUpdateNotificationStateFor characteristic: CBCharacteristic,
         error: Error?
     ) {
+        guard peripheral === self.peripheral else { return }
         print(
             "BLE: notify state for \(characteristicLabel(characteristic)) " +
             "isNotifying=\(characteristic.isNotifying) " +
@@ -728,15 +784,27 @@ extension BLEConnection: CBPeripheralDelegate {
             "isNotifying": String(characteristic.isNotifying),
             "error": error?.localizedDescription ?? "nil"
         ])
+        guard characteristic === indicateCharacteristic else { return }
+        if let error {
+            failConnect(error)
+        } else if !characteristic.isNotifying {
+            failConnect(BLEError.connectionFailed)
+        } else {
+            completeConnectIfReady()
+        }
     }
 
     public func peripheral(
         _ peripheral: CBPeripheral,
         didModifyServices invalidatedServices: [CBService]
     ) {
+        guard peripheral === self.peripheral else { return }
         let uuids = invalidatedServices.map(\.uuid.uuidString).joined(separator: ",")
         print("BLE: services modified/invalidated -> [\(uuids)]")
         recordCaptureNote(category: "services_modified", message: "Services modified", fields: ["uuids": uuids])
+        if invalidatedServices.contains(where: { $0.uuid == radioServiceUUID }) {
+            failConnect(BLEError.serviceNotFound)
+        }
     }
 
     public func peripheral(
@@ -744,6 +812,7 @@ extension BLEConnection: CBPeripheralDelegate {
         didWriteValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
+        guard peripheral === self.peripheral else { return }
         print(
             "BLE: didWriteValue for \(characteristicLabel(characteristic)) " +
             "error=\(error?.localizedDescription ?? "nil")"
@@ -753,5 +822,6 @@ extension BLEConnection: CBPeripheralDelegate {
             "label": characteristicLabel(characteristic),
             "error": error?.localizedDescription ?? "nil"
         ])
+        if let error, characteristic === writeCharacteristic { failConnect(error) }
     }
 }

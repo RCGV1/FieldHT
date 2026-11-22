@@ -9,7 +9,8 @@ public struct ProtocolDecoder {
         var stream = BitStream(data: data)
         
         let commandGroupRaw = try stream.readInt(16)
-        guard let commandGroup = CommandGroup(rawValue: UInt8(commandGroupRaw)) else {
+        guard let groupValue = UInt8(exactly: commandGroupRaw),
+              let commandGroup = CommandGroup(rawValue: groupValue) else {
             throw ProtocolError.invalidCommandGroup
         }
         
@@ -250,16 +251,14 @@ public struct ProtocolDecoder {
         var ranges: [FrequencyRange] = []
 
         while stream.remaining >= 32 {
-            let supportsTransmitFM = try stream.readBool()
-            let disablesReceiveFM = try stream.readBool()
-            let supportsTransmitDMR = try stream.readBool()
-            let lowerMHz = try stream.readInt(13) & 0x3FF
-            let supportsTransmitAM = try stream.readBool()
-            let supportsReceiveAM = try stream.readBool()
-            let supportsReceiveDMR = try stream.readBool()
-            let upperMHz = try stream.readInt(13) & 0x3FF
+            let lowerRaw = try stream.readInt(16)
+            let upperRaw = try stream.readInt(16)
+            let lowerMHz = lowerRaw & 0x3FFF
+            let upperMHz = upperRaw & 0x3FFF
 
-            guard lowerMHz < upperMHz else { continue }
+            guard lowerMHz > 0, upperMHz > 0 else { break }
+            if lowerMHz == upperMHz { continue }
+            guard lowerMHz < upperMHz else { break }
 
             func appendRange(direction: FrequencyRangeDirection, modulation: FrequencyRangeModulation) {
                 ranges.append(
@@ -272,12 +271,15 @@ public struct ProtocolDecoder {
                 )
             }
 
-            if !disablesReceiveFM { appendRange(direction: .receive, modulation: .fm) }
-            if supportsTransmitFM { appendRange(direction: .transmit, modulation: .fm) }
-            if supportsReceiveAM { appendRange(direction: .receive, modulation: .am) }
-            if supportsTransmitAM { appendRange(direction: .transmit, modulation: .am) }
-            if supportsReceiveDMR { appendRange(direction: .receive, modulation: .dmr) }
-            if supportsTransmitDMR { appendRange(direction: .transmit, modulation: .dmr) }
+            // Capability belongs to the low edge; upper-edge flags are not authoritative.
+            switch lowerRaw >> 14 {
+            case 0: appendRange(direction: .receive, modulation: .fm)
+            case 1: appendRange(direction: .receive, modulation: .am)
+            case 2:
+                appendRange(direction: .receive, modulation: .fm)
+                appendRange(direction: .transmit, modulation: .fm)
+            default: break
+            }
         }
 
         return DeviceFrequencyRanges(ranges: ranges)

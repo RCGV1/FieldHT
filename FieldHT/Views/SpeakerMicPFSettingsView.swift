@@ -128,18 +128,16 @@ struct SpeakerMicPFSettingsView: View {
                     .font(.title2.weight(.semibold))
                     .multilineTextAlignment(.center)
 
-                Text("FieldHT knows the BS22 button layout right now. This connected mic reports as \(controller.modelName), so I need the hardware in hand to map its button positions correctly.")
+                Text("FieldHT knows the BS22 button layout right now. This connected mic reports as \(controller.modelName), so the hardware needs to be mapped before its button positions can be assigned correctly.")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
 
-                Text("Optional tip tiers help fund the hardware work needed to decode and add support for more speaker mics.")
-                    .font(.headline)
-                    .multilineTextAlignment(.center)
-
-                VStack(spacing: 14) {
-                    SupportDeveloperRow()
+                Link(destination: URL(string: "https://github.com/RCGV1/FieldHT/issues")!) {
+                    Label("Request support for this mic", systemImage: "square.and.pencil")
+                        .font(.headline)
                 }
+                .buttonStyle(.borderedProminent)
                 .padding(18)
                 .background(
                     RoundedRectangle(cornerRadius: 20, style: .continuous)

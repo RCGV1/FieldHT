@@ -56,6 +56,7 @@ public final class BLEScanner: NSObject, ObservableObject {
     private var validationTimeouts: [UUID: Timer] = [:]
     private var validationConnectionsToRelease: Set<UUID> = []
     private var scanMode: BLEScanMode = .radioOnly
+    private var scanTimeoutTask: Task<Void, Never>?
     
     // UserDefaults key for storing last paired device
     private let lastPairedDeviceKey = "com.fieldHT.lastPairedDeviceUUID"
@@ -110,15 +111,20 @@ public final class BLEScanner: NSObject, ObservableObject {
         isScanning = true
         statusMessage = mode == .radioOnly ? "Scanning for radios..." : "Scanning for accessories..."
         
-        // First, check for previously paired device
-        checkForPreviouslyPairedDevice()
-
         // Then scan for new devices with the radio pairing service
         let serviceFilter: [CBUUID]? = mode == .radioOnly ? [radioPairingUUID] : nil
         centralManager.scanForPeripherals(
             withServices: serviceFilter,
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
         )
+        scanTimeoutTask?.cancel()
+        scanTimeoutTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(ConnectionUXPolicy.scanDuration)) }
+            catch { return }
+            guard let self, !Task.isCancelled, self.isScanning else { return }
+            self.stopScanning()
+            self.statusMessage = "Scan finished. Scan again to refresh nearby devices."
+        }
     }
     
     private func checkForPreviouslyPairedDevice() {
@@ -148,7 +154,9 @@ public final class BLEScanner: NSObject, ObservableObject {
     }
 
     public func stopScanning() {
-        centralManager.stopScan()
+        scanTimeoutTask?.cancel()
+        scanTimeoutTask = nil
+        if centralManager.state == .poweredOn { centralManager.stopScan() }
         isScanning = false
         statusMessage = "Scanning stopped"
         

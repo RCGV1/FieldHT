@@ -190,6 +190,12 @@ struct ChannelListView: View {
             let controller = radioController ?? radioManager.radioController
             viewModel.setRadioController(controller)
             viewModel.loadChannels()
+
+            if needsRadioHydration(controller) {
+                Task {
+                    await hydrateAndReload()
+                }
+            }
         }
         .onChange(of: radioManager.activeRegionIndex) {
             // Only hydrate if this wasn't triggered by our manual switch
@@ -207,8 +213,14 @@ struct ChannelListView: View {
                 // Wait for hydration
                 Task {
                     try? await Task.sleep(nanoseconds: 500_000_000)
-                    await MainActor.run {
+                    let shouldHydrate = await MainActor.run {
                         viewModel.setRadioController(radioManager.radioController)
+                        viewModel.loadChannels()
+                        return needsRadioHydration(radioManager.radioController)
+                    }
+
+                    if shouldHydrate {
+                        await hydrateAndReload()
                     }
                 }
             } else {
@@ -235,20 +247,31 @@ struct ChannelListView: View {
             Task { await handleDocumentImport(result: result) }
         }
         .sheet(isPresented: $showDocumentImportPreview) {
-            AIImportPreviewSheet(channels: importedDocumentChannels) { channels in
+            AIImportPreviewSheet(channels: importedDocumentChannels, onImport: { channels in
                 Task { await commitChannels(channels) }
-            }
+            }, frequencyRanges: (radioController ?? radioManager.radioController)?.frequencyRanges)
         }
+    }
+
+    private func needsRadioHydration(_ controller: RadioController?) -> Bool {
+        guard let controller, controller.isConnected else { return false }
+
+        let expectedMemoryChannels = min(30, controller.deviceInfo.channelCount)
+        guard expectedMemoryChannels > 0 else { return false }
+
+        return viewModel.regularChannels.count < expectedMemoryChannels
     }
 
     // Helper function to hydrate and reload with loading indicator and retry logic
     private func hydrateAndReload() async {
+        guard !isHydrating else { return }
+
         await MainActor.run {
             isHydrating = true
             retryCount = 0
         }
 
-        let backoffs = [5, 10, 15]
+        let backoffs = [1, 2, 4]
         var lastError: Error?
 
         for attempt in 0..<maxRetries {
@@ -257,7 +280,7 @@ struct ChannelListView: View {
             }
 
             do {
-                try await radioManager.radioController?.hydrateChannels()
+                try await radioManager.radioController?.hydrateChannels(refreshRegionNames: false)
                 await MainActor.run {
                     viewModel.loadChannels()
                     isHydrating = false
@@ -305,12 +328,6 @@ struct ChannelListView: View {
         do {
             print("ChannelListView: Switching to region \(index)")
             try await radioManager.radioController?.setRegion(index)
-            
-            // Wait for radio to process region change
-            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
-            
-            print("ChannelListView: Hydrating new region...")
-            try await radioManager.radioController?.hydrateChannels()
             
             await MainActor.run {
                 viewModel.loadChannels()
@@ -372,7 +389,12 @@ struct ChannelListView: View {
             // Limit to 30 channels
             let channelsToImport = Array(channels.prefix(30))
 
-            await commitChannels(channelsToImport, overflowCount: channels.count > 30 ? channels.count : nil)
+            if let controller = radioManager.radioController, controller.deviceInfo.frequencyRangeCount > 0 {
+                _ = try await controller.getFrequencyRanges()
+            }
+            importedDocumentChannels = channelsToImport
+            isImporting = false
+            showDocumentImportPreview = true
 
         } catch {
             print("ChannelListView: Import error: \(error)")
@@ -404,6 +426,9 @@ struct ChannelListView: View {
             let channels = try await AIChannelImporter.parse(url: fileURL) { msg in
                 Task { @MainActor in importStatusMessage = msg }
             }
+            if let controller = radioManager.radioController, controller.deviceInfo.frequencyRangeCount > 0 {
+                _ = try await controller.getFrequencyRanges()
+            }
             await MainActor.run {
                 importedDocumentChannels = channels
                 isDocumentImporting = false
@@ -433,6 +458,16 @@ struct ChannelListView: View {
             }
 
             do {
+                // Check the complete batch before the first write so an invalid
+                // frequency cannot leave a half-imported group.
+                do {
+                    for channel in channelsToImport { try await controller.validateChannelForWrite(channel) }
+                } catch {
+                    viewModel.isSaving = false
+                    isImporting = false
+                    importError = "Import blocked: \(error.localizedDescription)"
+                    return
+                }
                 let existingChannels = controller.channels(forRegion: viewModel.activeRegionIndex)
 
                 var importedCount = 0
@@ -463,7 +498,7 @@ struct ChannelListView: View {
                     }
                 }
 
-                try await controller.hydrateChannels()
+                try await controller.hydrateChannels(refreshRegionNames: false)
 
                 await MainActor.run {
                     viewModel.isSaving = false

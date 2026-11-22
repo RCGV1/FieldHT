@@ -22,17 +22,25 @@ public class RadioManager: ObservableObject {
     @Published public var isConnected: Bool = false
     @Published public var connectionError: String?
     @Published public var isConnecting: Bool = false
+    @Published public private(set) var isDisconnecting = false
     @Published public var isSpeakerMicConnecting: Bool = false
     @Published public var speakerMicConnectionError: String?
     @Published public var isAutoReconnecting: Bool = false
+    @Published public private(set) var isRadioReconnectPaused = false
+    @Published public private(set) var reconnectAttempt = 0
     @Published public var autoReconnectEnabled: Bool {
         didSet {
-            UserDefaults.standard.set(autoReconnectEnabled, forKey: autoReconnectEnabledKey)
+            defaults.set(autoReconnectEnabled, forKey: autoReconnectEnabledKey)
             if !autoReconnectEnabled {
-                reconnectTask?.cancel()
-                reconnectTask = nil
+                if !isConnected { cancelRadioConnection() }
                 isAutoReconnecting = false
+                if !isConnected { isConnecting = false }
                 updateIdleTimerForCapture()
+            } else if !oldValue {
+                isRadioReconnectPaused = false
+                if !isConnected, !isConnecting, !isDisconnecting, let uuid = lastPairedDeviceUUID {
+                    startAutoReconnect(to: uuid)
+                }
             }
         }
     }
@@ -150,6 +158,15 @@ public class RadioManager: ObservableObject {
     
     private var connectionTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
+    private var connectionCleanupTask: Task<Void, Never>?
+    private var connectionGeneration = UUID()
+    private var speakerMicConnectionTask: Task<Void, Never>?
+    private var speakerMicCleanupTask: Task<Void, Never>?
+    private var speakerMicGeneration = UUID()
+    private var speakerMicConnectionController: SpeakerMicController?
+    private var speakerMicObservation: AnyCancellable?
+    private let defaults: UserDefaults
+    private var transportBluetoothAvailable = false
     private var connectionHealthTask: Task<Void, Never>?
     private var radioPollTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
@@ -163,27 +180,27 @@ public class RadioManager: ObservableObject {
     private let lastPairedDeviceKey = "com.fieldHT.lastPairedDeviceUUID"
     private let lastSpeakerMicDeviceKey = "com.fieldHT.lastSpeakerMicDeviceUUID"
     private let autoReconnectEnabledKey = "com.fieldHT.autoReconnectEnabled"
-    private var reconnectAttempt: Int = 0
 
     private let maxAutoReconnectDelaySeconds: Double = 15
     private let speakerMicEvidenceTimeout: TimeInterval = 90
     private let normalRadioPollInterval: TimeInterval = 60
     private let speakerMicQuietRadioPollInterval: TimeInterval = 300
     
-    public init() {
-        if UserDefaults.standard.object(forKey: autoReconnectEnabledKey) == nil {
-            UserDefaults.standard.set(true, forKey: autoReconnectEnabledKey)
+    public init(restoreSavedRadio: Bool = true, defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        if defaults.object(forKey: autoReconnectEnabledKey) == nil {
+            defaults.set(true, forKey: autoReconnectEnabledKey)
         }
-        self.autoReconnectEnabled = UserDefaults.standard.bool(forKey: autoReconnectEnabledKey)
+        self.autoReconnectEnabled = defaults.bool(forKey: autoReconnectEnabledKey)
 
-        if autoReconnectEnabled, let lastUUID = lastPairedDeviceUUID {
+        if restoreSavedRadio, autoReconnectEnabled, let lastUUID = lastPairedDeviceUUID {
             startAutoReconnect(to: lastUUID)
         }
     }
 
     public var lastPairedDeviceUUID: UUID? {
         get {
-            guard let uuidString = UserDefaults.standard.string(forKey: lastPairedDeviceKey),
+            guard let uuidString = defaults.string(forKey: lastPairedDeviceKey),
                   let uuid = UUID(uuidString: uuidString) else {
                 return nil
             }
@@ -191,16 +208,16 @@ public class RadioManager: ObservableObject {
         }
         set {
             if let uuid = newValue {
-                UserDefaults.standard.set(uuid.uuidString, forKey: lastPairedDeviceKey)
+                defaults.set(uuid.uuidString, forKey: lastPairedDeviceKey)
             } else {
-                UserDefaults.standard.removeObject(forKey: lastPairedDeviceKey)
+                defaults.removeObject(forKey: lastPairedDeviceKey)
             }
         }
     }
 
     public var lastSpeakerMicDeviceUUID: UUID? {
         get {
-            guard let uuidString = UserDefaults.standard.string(forKey: lastSpeakerMicDeviceKey),
+            guard let uuidString = defaults.string(forKey: lastSpeakerMicDeviceKey),
                   let uuid = UUID(uuidString: uuidString) else {
                 return nil
             }
@@ -208,9 +225,9 @@ public class RadioManager: ObservableObject {
         }
         set {
             if let uuid = newValue {
-                UserDefaults.standard.set(uuid.uuidString, forKey: lastSpeakerMicDeviceKey)
+                defaults.set(uuid.uuidString, forKey: lastSpeakerMicDeviceKey)
             } else {
-                UserDefaults.standard.removeObject(forKey: lastSpeakerMicDeviceKey)
+                defaults.removeObject(forKey: lastSpeakerMicDeviceKey)
             }
         }
     }
@@ -247,20 +264,36 @@ public class RadioManager: ObservableObject {
         #endif
     }
     
+    private func cancelConnectionTasks() -> Task<Void, Never> {
+        let previousCleanup = connectionCleanupTask
+        let previousConnection = connectionTask
+        let previousReconnect = reconnectTask
+        connectionGeneration = UUID()
+        previousConnection?.cancel()
+        previousReconnect?.cancel()
+        connectionTask = nil
+        reconnectTask = nil
+        // Finish the old controller's disconnect cleanup before reusing its transport.
+        let cleanup = Task {
+            await previousCleanup?.value
+            await previousConnection?.value
+            await previousReconnect?.value
+        }
+        connectionCleanupTask = cleanup
+        return cleanup
+    }
+
     /// Connect to a radio device
     public func connect(to deviceUUID: UUID) {
-        guard !isConnecting && !isConnected else { return }
+        guard !isConnecting && !isConnected && !isDisconnecting else { return }
 
-        // A user action implies we should keep trying to stay connected.
-        autoReconnectEnabled = true
-        lastPairedDeviceUUID = deviceUUID
+        isRadioReconnectPaused = false
         
         isConnecting = true
         connectionError = nil
 
-        // If an auto-reconnect loop is running, let it drive future attempts.
-        reconnectTask?.cancel()
-        reconnectTask = nil
+        let cleanup = cancelConnectionTasks()
+        let generation = connectionGeneration
         isAutoReconnecting = false
         reconnectAttempt = 0
         updateIdleTimerForCapture()
@@ -271,12 +304,15 @@ public class RadioManager: ObservableObject {
         ])
         
         connectionTask = Task {
+            await cleanup.value
+            guard !Task.isCancelled, self.connectionGeneration == generation else { return }
             do {
                 if let existing = self.connectionController,
                    let existingUUID = self.connectionControllerDeviceUUID,
                    existingUUID != deviceUUID {
                     // Switching devices: tear down the prior controller before reusing state.
                     await existing.disconnect()
+                    try Task.checkCancellation()
                     self.connectionController = nil
                     self.connectionControllerDeviceUUID = nil
                 }
@@ -289,8 +325,11 @@ public class RadioManager: ObservableObject {
                 subscribeToRadio(controller)
 
                 try await controller.connect()
+                try Task.checkCancellation()
+                guard self.connectionGeneration == generation else { return }
 
                 self.radioController = controller
+                self.lastPairedDeviceUUID = deviceUUID
                 self.isConnected = true
                 self.isConnecting = false
                 self.connectionError = nil
@@ -304,6 +343,7 @@ public class RadioManager: ObservableObject {
                 // auto-restoring that second link was causing connection churn.
                 startPolling()
             } catch {
+                guard self.connectionGeneration == generation else { return }
                 if error is CancellationError {
                     self.connectionError = nil
                     self.isConnecting = false
@@ -324,11 +364,29 @@ public class RadioManager: ObservableObject {
                     "error": error.localizedDescription
                 ])
 
-                startAutoReconnect(to: deviceUUID)
+                // A failed manual selection stays failed until the user retries or chooses another device.
+                self.isRadioReconnectPaused = true
             }
         }
     }
     
+    public func cancelRadioConnection() {
+        guard !isConnected else { return }
+        isRadioReconnectPaused = true
+        let cleanup = cancelConnectionTasks()
+        let controller = connectionController
+        connectionCleanupTask = Task {
+            await cleanup.value
+            await controller?.disconnect()
+        }
+        isConnecting = false
+        isAutoReconnecting = false
+        connectionError = nil
+        radioController = nil
+        cancellables.removeAll()
+        updateIdleTimerForCapture()
+    }
+
     private func subscribeToRadio(_ radio: RadioController) {
         cancellables.removeAll()
         radio.objectWillChange
@@ -347,38 +405,43 @@ public class RadioManager: ObservableObject {
             }
             .store(in: &cancellables)
             
-        // Observe radio.state specifically if objectWillChange isn't enough (it should be)
-        // But since we are creating derived properties, objectWillChange on RadioController
-        // should signal us to update.
+        radio.$state.sink { [weak self] state in
+            guard let state else { return }
+            let memoryRange = 0..<state.deviceInfo.channelCount
+            if memoryRange.contains(state.settings.channelA) { self?.lastMemoryChannelAIndex = state.settings.channelA }
+            if memoryRange.contains(state.settings.channelB) { self?.lastMemoryChannelBIndex = state.settings.channelB }
+        }
+        .store(in: &cancellables)
     }
     
     /// Disconnect from the radio
     public func disconnect() {
+        guard !isDisconnecting else { return }
+        isDisconnecting = true
         // A user action implies we should stop trying to reconnect.
         autoReconnectEnabled = false
 
-        connectionTask?.cancel()
-        connectionTask = nil
-        reconnectTask?.cancel()
-        reconnectTask = nil
+        let cleanup = cancelConnectionTasks()
+        let generation = connectionGeneration
         isAutoReconnecting = false
         reconnectAttempt = 0
         stopConnectionHealthLogging()
 
         stopPolling()
         cancellables.removeAll()
+        disconnectSpeakerMic()
         
+        let controller = connectionController ?? radioController
         Task {
-            let controller = connectionController ?? radioController
+            defer { self.isDisconnecting = false }
+            await cleanup.value
+            guard self.connectionGeneration == generation else { return }
             if let controller {
                 await controller.disconnect()
             }
 
-            if let accessory = self.speakerMicController {
-                await accessory.disconnect()
-            }
-            
             await MainActor.run {
+                guard self.connectionGeneration == generation else { return }
                 // Keep the main controller alive so a manual reconnect uses the same
                 // CBCentralManager instead of recreating it in a transient state.
                 self.radioController = nil
@@ -401,6 +464,7 @@ public class RadioManager: ObservableObject {
     /// Called by the BLE layer when the transport drops unexpectedly.
     /// This is intentionally lightweight and safe to call multiple times.
     public func handleTransportDidDisconnect(error: Error?) {
+        cancelSpeakerMicConnection()
         let status = currentStatus
         print(
             "RadioManager: transport disconnected " +
@@ -411,8 +475,7 @@ public class RadioManager: ObservableObject {
             "rx=\(status?.isInRx ?? false)"
         )
         // Prevent an in-flight connect task from racing with the disconnect callback.
-        connectionTask?.cancel()
-        connectionTask = nil
+        _ = cancelConnectionTasks()
 
         stopPolling()
         stopConnectionHealthLogging()
@@ -442,13 +505,27 @@ public class RadioManager: ObservableObject {
         }
     }
 
+    public func handleTransportBluetoothUnavailable() {
+        transportBluetoothAvailable = false
+    }
+
+    public func handleTransportBluetoothAvailable() {
+        transportBluetoothAvailable = true
+        guard autoReconnectEnabled, !isRadioReconnectPaused, !isConnected, !isConnecting, !isDisconnecting,
+              let uuid = lastPairedDeviceUUID else { return }
+        _ = cancelConnectionTasks()
+        startAutoReconnect(to: uuid)
+    }
+
     private func startAutoReconnect(to deviceUUID: UUID) {
-        guard autoReconnectEnabled else { return }
-        guard !isConnected else { return }
+        guard autoReconnectEnabled, !isRadioReconnectPaused else { return }
+        guard !isConnected, !isDisconnecting else { return }
 
         // Avoid multiple loops.
         if reconnectTask != nil { return }
 
+        let cleanup = cancelConnectionTasks()
+        let generation = connectionGeneration
         isAutoReconnecting = true
         reconnectAttempt = 0
         connectionError = "Connection lost. Reconnecting..."
@@ -458,10 +535,12 @@ public class RadioManager: ObservableObject {
         ])
 
         reconnectTask = Task { [weak self] in
+            await cleanup.value
             guard let self else { return }
+            guard !Task.isCancelled, self.connectionGeneration == generation else { return }
 
-            while !Task.isCancelled {
-                if !self.autoReconnectEnabled {
+            while !Task.isCancelled, self.connectionGeneration == generation {
+                if !self.autoReconnectEnabled || self.isRadioReconnectPaused {
                     break
                 }
                 if self.isConnected {
@@ -485,6 +564,7 @@ public class RadioManager: ObservableObject {
                        let existingUUID = self.connectionControllerDeviceUUID,
                        existingUUID != deviceUUID {
                         await existing.disconnect()
+                        try Task.checkCancellation()
                         self.connectionController = nil
                         self.connectionControllerDeviceUUID = nil
                     }
@@ -495,6 +575,8 @@ public class RadioManager: ObservableObject {
 
                     self.subscribeToRadio(controller)
                     try await controller.connect()
+                    try Task.checkCancellation()
+                    guard self.connectionGeneration == generation else { return }
 
                     self.radioController = controller
                     self.isConnected = true
@@ -509,6 +591,7 @@ public class RadioManager: ObservableObject {
                     self.startPolling()
                     break
                 } catch {
+                    guard self.connectionGeneration == generation else { return }
                     if error is CancellationError || Task.isCancelled {
                         break
                     }
@@ -521,18 +604,25 @@ public class RadioManager: ObservableObject {
 
                     self.connectionError = "Connection lost. Reconnecting..."
 
-                    // If Bluetooth is unavailable, don't keep spinning.
-                    if let bleError = error as? BLEError, bleError == .bluetoothUnavailable {
+                    // Keep the user's reconnect preference; the powered-on callback resumes it.
+                    if let bleError = error as? BLEError,
+                       (bleError == .bluetoothUnavailable || bleError == .bluetoothPoweredOff || bleError == .bluetoothUnauthorized),
+                       !self.transportBluetoothAvailable {
                         self.isConnecting = false
                         self.radioController = nil
                         self.cancellables.removeAll()
-                        self.autoReconnectEnabled = false
                         self.connectionError = error.localizedDescription
                         self.updateIdleTimerForCapture()
-                        self.recordConnectionNote(category: "radio_reconnect_stopped", message: "Stopped auto reconnect because Bluetooth is unavailable", fields: [
+                        self.recordConnectionNote(category: "radio_reconnect_waiting", message: "Waiting for Bluetooth before reconnecting", fields: [
                             "device_uuid": deviceUUID.uuidString,
                             "error": error.localizedDescription
                         ])
+                        break
+                    }
+
+                    if !ConnectionUXPolicy.shouldRetryRadio(afterFailedAttempts: self.reconnectAttempt + 1) {
+                        self.isRadioReconnectPaused = true
+                        self.connectionError = "Could not reach the saved radio. Reconnect when it is nearby, or choose another radio."
                         break
                     }
 
@@ -549,7 +639,9 @@ public class RadioManager: ObservableObject {
             }
 
             await MainActor.run {
+                guard self.connectionGeneration == generation else { return }
                 self.reconnectTask = nil
+                self.isConnecting = false
                 self.isAutoReconnecting = false
                 self.updateIdleTimerForCapture()
             }
@@ -583,51 +675,88 @@ public class RadioManager: ObservableObject {
         }
     }
 
-    public func connectSpeakerMic(to deviceUUID: UUID) {
-        guard !isSpeakerMicConnecting else { return }
+    private func cancelSpeakerMicTasks() -> Task<Void, Never> {
+        let previousCleanup = speakerMicCleanupTask
+        let previousAttempt = speakerMicConnectionTask
+        speakerMicGeneration = UUID()
+        previousAttempt?.cancel()
+        speakerMicConnectionTask = nil
+        let cleanup = Task {
+            await previousCleanup?.value
+            await previousAttempt?.value
+        }
+        speakerMicCleanupTask = cleanup
+        return cleanup
+    }
 
+    public func connectSpeakerMic(to deviceUUID: UUID) {
+        guard isConnected, !isDisconnecting else { return }
+        if speakerMicController?.deviceUUID == deviceUUID, speakerMicController?.isConnected == true { return }
+        let cleanup = cancelSpeakerMicTasks()
+        let generation = speakerMicGeneration
         isSpeakerMicConnecting = true
         speakerMicConnectionError = nil
-
-        Task {
+        if speakerMicController?.deviceUUID != deviceUUID { speakerMicController = nil }
+        speakerMicConnectionTask = Task { [weak self] in
+            await cleanup.value
+            guard let self, !Task.isCancelled, self.speakerMicGeneration == generation else { return }
+            if let existing = self.speakerMicConnectionController, existing.deviceUUID != deviceUUID {
+                await existing.disconnect()
+                guard !Task.isCancelled, self.speakerMicGeneration == generation else { return }
+                self.speakerMicConnectionController = nil
+                self.speakerMicController = nil
+            }
+            let controller = self.speakerMicConnectionController ?? SpeakerMicController.newBLE(deviceUUID: deviceUUID)
+            self.speakerMicConnectionController = controller
+            self.speakerMicObservation = controller.objectWillChange.receive(on: RunLoop.main).sink { [weak self, weak controller] _ in
+                guard let self, let controller, self.speakerMicConnectionController === controller else { return }
+                if !controller.isConnected && !self.isSpeakerMicConnecting {
+                    self.speakerMicController = nil
+                    self.speakerMicConnectionError = controller.errorMessage
+                }
+                self.objectWillChange.send()
+            }
             do {
-                if let existing = self.speakerMicController, existing.deviceUUID != deviceUUID {
-                    await existing.disconnect()
-                    self.speakerMicController = nil
-                }
-
-                let controller = self.speakerMicController ?? SpeakerMicController.newBLE(deviceUUID: deviceUUID)
                 try await controller.connect()
-
-                await MainActor.run {
-                    self.speakerMicController = controller
-                    self.lastSpeakerMicDeviceUUID = deviceUUID
-                    self.isSpeakerMicConnecting = false
-                    self.speakerMicConnectionError = nil
-                    self.noteSpeakerMicEvidence()
-                }
+                try Task.checkCancellation()
+                guard self.speakerMicGeneration == generation else { return }
+                self.speakerMicController = controller
+                self.lastSpeakerMicDeviceUUID = deviceUUID
+                self.isSpeakerMicConnecting = false
+                self.speakerMicConnectionError = nil
+                self.noteSpeakerMicEvidence()
             } catch {
-                await MainActor.run {
-                    self.speakerMicController = nil
-                    self.isSpeakerMicConnecting = false
-                    self.speakerMicConnectionError = error.localizedDescription
-                }
+                await controller.disconnect()
+                guard self.speakerMicGeneration == generation else { return }
+                self.speakerMicController = nil
+                self.isSpeakerMicConnecting = false
+                self.speakerMicConnectionError = error is CancellationError ? nil : error.localizedDescription
             }
         }
     }
 
-    public func disconnectSpeakerMic() {
-        Task {
-            if let controller = self.speakerMicController {
-                await controller.disconnect()
-            }
+    public func cancelSpeakerMicConnection() {
+        guard isSpeakerMicConnecting else { return }
+        disconnectSpeakerMic()
+    }
 
-            await MainActor.run {
-                self.speakerMicController = nil
-                self.isSpeakerMicConnecting = false
-                self.speakerMicConnectionError = nil
-            }
+    public func disconnectSpeakerMic() {
+        let cleanup = cancelSpeakerMicTasks()
+        let controller = speakerMicConnectionController ?? speakerMicController
+        speakerMicObservation = nil
+        speakerMicCleanupTask = Task {
+            await cleanup.value
+            await controller?.disconnect()
         }
+        speakerMicController = nil
+        isSpeakerMicConnecting = false
+        speakerMicConnectionError = nil
+    }
+
+    public func forgetLastSpeakerMic() {
+        disconnectSpeakerMic()
+        lastSpeakerMicDeviceUUID = nil
+        objectWillChange.send()
     }
     
     // MARK: - Polling
@@ -1000,12 +1129,12 @@ public class RadioManager: ObservableObject {
     
     /// Check if VFO mode is active for channel A
     var isVFOA: Bool {
-        return vfoAIndex >= 250 // Assuming 250+ is special/VFO
+        return [251, 252].contains(vfoAIndex)
     }
     
     /// Check if VFO mode is active for channel B
     var isVFOB: Bool {
-         return vfoBIndex >= 250
+        return [251, 252].contains(vfoBIndex)
     }
     
     /// Toggle VFO mode for a channel
@@ -1042,11 +1171,12 @@ public class RadioManager: ObservableObject {
             return 0
         }
 
-        if let rememberedIndex, rememberedIndex < 250 {
+        let memoryRange = 0..<memoryChannelCount
+        if let rememberedIndex, memoryRange.contains(rememberedIndex) {
             return rememberedIndex
         }
 
-        if currentIndex < 250 {
+        if memoryRange.contains(currentIndex) {
             return currentIndex
         }
 
@@ -1055,21 +1185,23 @@ public class RadioManager: ObservableObject {
     
     /// Get calculated VFO Frequency in MHz
     var vfoAFrequencyMHz: Double {
-        return radioController?.channelsForCurrentRegion.first(where: { $0.channelID == 252 })?.rxFreq ?? 0.0
+        return vfoAChannel?.rxFreq ?? 0.0
     }
     
     var vfoBFrequencyMHz: Double {
-        return radioController?.channelsForCurrentRegion.first(where: { $0.channelID == 251 })?.rxFreq ?? 0.0
+        return vfoBChannel?.rxFreq ?? 0.0
     }
 
     /// Get VFO A Channel object
     var vfoAChannel: Channel? {
-        return radioController?.channelsForCurrentRegion.first(where: { $0.channelID == 252 })
+        let id = isVFOA ? vfoAIndex : 252
+        return radioController?.channelsForCurrentRegion.first(where: { $0.channelID == id })
     }
 
     /// Get VFO B Channel object
     var vfoBChannel: Channel? {
-        return radioController?.channelsForCurrentRegion.first(where: { $0.channelID == 251 })
+        let id = isVFOB ? vfoBIndex : 251
+        return radioController?.channelsForCurrentRegion.first(where: { $0.channelID == id })
     }
     
     /// Selects a VFO and tunes it directly.
@@ -1098,8 +1230,8 @@ public class RadioManager: ObservableObject {
             throw BLEError.notConnected
         }
 
-        try await controller.setSettings(settings)
         try await controller.setChannel(vfoID, txFreq: frequency, rxFreq: frequency)
+        try await controller.setSettings(settings)
     }
 
     /// Set frequency for VFO without requiring callers to manage an asynchronous task.

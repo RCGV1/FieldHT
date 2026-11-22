@@ -366,6 +366,16 @@ struct SatelliteTrackingView: View {
         .onChange(of: vm.dopplerRxMHz) {
             vm.onDopplerUpdated(radioManager: radioManager)
         }
+        .onChange(of: vm.dopplerTxMHz) { vm.onDopplerUpdated(radioManager: radioManager) }
+        .onChange(of: radioManager.isReceiving) {
+            if !radioManager.isReceiving { vm.onDopplerUpdated(radioManager: radioManager) }
+        }
+        .onChange(of: radioManager.isConnected) {
+            vm.resetRadioRetuning()
+            if radioManager.isConnected, vm.isTracking { vm.onSelectionChanged(radioManager: radioManager) }
+        }
+        .onChange(of: vm.autoApplyMinDeltaHz) { vm.onDopplerUpdated(radioManager: radioManager) }
+        .onChange(of: vm.holdRetuningWhileReceiving) { vm.onDopplerUpdated(radioManager: radioManager) }
         .onChange(of: vm.selectedFrequencyOptionId) {
             vm.onFrequencyOptionChanged(radioManager: radioManager)
         }
@@ -671,6 +681,17 @@ struct SatelliteTrackingView: View {
                         }
                     }
                 }
+
+                Picker("Doppler Retune Threshold", selection: $vm.autoApplyMinDeltaHz) {
+                    Text("Any Change").tag(0.0)
+                    Text("500 Hz").tag(500.0)
+                    Text("1 kHz").tag(1_000.0)
+                    Text("2 kHz").tag(2_000.0)
+                }
+                Toggle("Hold Retuning While Receiving", isOn: $vm.holdRetuningWhileReceiving)
+                Text("Larger thresholds reduce audio interruptions. Reception hold defers automatic frequency changes until the radio reports reception has ended; manual tuning and tone changes still apply.")
+                    .font(.footnote)
+                    .foregroundStyle(secondaryText)
 
                 if let message = vm.frequencyErrorMessage, !message.isEmpty {
                     Text(message)

@@ -115,7 +115,12 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
 
     @Published private(set) var autoApplyEnabled: Bool = true
     @Published var autoApplyChannel: ChannelType = .a
-    @Published var autoApplyMinDeltaHz: Double = 10
+    @Published var autoApplyMinDeltaHz: Double = SatelliteRetunePolicy.defaultThresholdHz {
+        didSet { UserDefaults.standard.set(autoApplyMinDeltaHz, forKey: "com.fieldHT.sat.retuneThresholdHz") }
+    }
+    @Published var holdRetuningWhileReceiving = false {
+        didSet { UserDefaults.standard.set(holdRetuningWhileReceiving, forKey: "com.fieldHT.sat.holdRetuningDuringReceive") }
+    }
 
     @Published var frequencyOptions: [SatFrequencyOption] = []
     @Published var selectedFrequencyOptionId: String = "custom"
@@ -175,7 +180,17 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
     private static let pathWindowSeconds: Int = 20 * 60
     private static let pathStepSeconds: Int = 10
 
-    private var lastAutoAppliedRxMHz: Double?
+    private struct RetuneRequest {
+        let target: SatelliteRetuneTarget
+        let force: Bool
+        let nativeSatelliteMode: Bool
+        let channel: ChannelType
+        let controller: RadioController
+    }
+    private var retunePolicy = SatelliteRetunePolicy()
+    private var pendingRetune: RetuneRequest?
+    private var retuneTask: Task<Void, Never>?
+    private var retuneGeneration = UUID()
 
     private var lastSatModeSentAt: Date?
     private var lastSatModeSentKey: SatModeKey?
@@ -187,7 +202,6 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
     private var satelliteMetaTask: Task<Void, Never>?
 
     private var allFrequencyOptions: [SatFrequencyOption] = []
-    private var lastToneWriteKey: String?
 
     private static let defaultFrequencyOptionLimit = 8
 
@@ -241,6 +255,9 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
 
         // Migration: "pinned" -> "favorites".
         let defaults = UserDefaults.standard
+        if let value = defaults.object(forKey: "com.fieldHT.sat.retuneThresholdHz") as? Double,
+           SatelliteRetunePolicy.thresholdsHz.contains(value) { autoApplyMinDeltaHz = value }
+        holdRetuningWhileReceiving = defaults.bool(forKey: "com.fieldHT.sat.holdRetuningDuringReceive")
         if let arr = defaults.array(forKey: Self.favoritesKey) as? [Int], !arr.isEmpty {
             favoriteSatelliteIds = Set(arr)
             favoriteSatelliteIds.insert(25544)
@@ -541,12 +558,10 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
     }
 
     func onFrequencyOptionChanged(radioManager: RadioManager) {
+        resetRadioRetuning()
         applySelectedFrequencyOptionToNominal()
         scheduleFreqModeParameterSync(radioManager: radioManager)
         maybeSendSatModeInfo(radioManager: radioManager, force: true)
-
-        // Force a tone write for the new selection when possible.
-        lastToneWriteKey = nil
 
         // Push the new selection immediately when we can.
         if radioManager.isConnected, dopplerRxMHz != nil {
@@ -557,6 +572,7 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
 
     func startTrackingSelected() {
         guard selectedSatelliteId != nil else { return }
+        resetRadioRetuning()
         isTracking = true
         trackingSource = .unknown
         startLiveActivityIfPossible()
@@ -564,6 +580,7 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
     }
 
     func stopTracking() {
+        resetRadioRetuning()
         isTracking = false
         refreshTask?.cancel()
         refreshTask = nil
@@ -602,72 +619,25 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
 
     func applyDopplerToRadio(_ channel: ChannelType, radioManager: RadioManager) {
         guard let rx = dopplerRxMHz, let tx = dopplerTxMHz else { return }
-
         if shouldUseRadioSatMode(radioManager: radioManager) {
-            // Drive the radio's built-in satellite mode (cmd 35/36/77) instead of writing VFO channels.
-            let tones = selectedTonesFromFrequencyOption()
             maybeSendSatModeInfo(radioManager: radioManager, force: true)
-            radioManager.setFreqModeParameters(rxMHz: rx, txMHz: tx, rxCTCSSHz: tones.rx, txCTCSSHz: tones.tx)
-            syncActiveVFOForSatelliteMode(radioManager: radioManager, rxMHz: rx, txMHz: tx)
-            return
         }
-
-        // VFO apply (split if available), also applying tones when present.
-        let tones = selectedTonesFromFrequencyOption()
-        radioManager.setSplitFrequencyAndCTCSS(
-            rxMHz: rx,
-            txMHz: tx,
-            rxCTCSSHz: tones.rx,
-            txCTCSSHz: tones.tx,
-            for: channel
-        )
+        queueRetune(rxMHz: rx, txMHz: tx, channel: channel, force: true, radioManager: radioManager)
     }
 
     func onDopplerUpdated(radioManager: RadioManager) {
-        guard radioManager.isConnected else { return }
+        guard radioManager.isConnected, isTracking else { return }
         guard let rx = dopplerRxMHz else { return }
-
         if shouldUseRadioSatMode(radioManager: radioManager) {
             maybeSendSatModeInfo(radioManager: radioManager)
-
-            // If auto-apply is enabled, update satellite-mode RX/TX parameters (cmd 35/36).
-            if autoApplyEnabled, let tx = dopplerTxMHz {
-                if let last = lastAutoAppliedRxMHz {
-                    let deltaHz = abs(rx - last) * 1_000_000.0
-                    if deltaHz < autoApplyMinDeltaHz {
-                        return
-                    }
-                }
-                lastAutoAppliedRxMHz = rx
-                let tones = selectedTonesFromFrequencyOption()
-                radioManager.setFreqModeParameters(rxMHz: rx, txMHz: tx, rxCTCSSHz: tones.rx, txCTCSSHz: tones.tx)
-                syncActiveVFOForSatelliteMode(radioManager: radioManager, rxMHz: rx, txMHz: tx)
-            }
-            return
         }
-
         guard autoApplyEnabled else { return }
-
-        if let last = lastAutoAppliedRxMHz {
-            let deltaHz = abs(rx - last) * 1_000_000.0
-            if deltaHz < autoApplyMinDeltaHz {
-                return
-            }
-        }
-
-        lastAutoAppliedRxMHz = rx
-        let tones = selectedTonesFromFrequencyOption()
         let tx = dopplerTxMHz ?? nominalTxMHz
-        radioManager.setSplitFrequencyAndCTCSS(
-            rxMHz: rx,
-            txMHz: tx,
-            rxCTCSSHz: tones.rx,
-            txCTCSSHz: tones.tx,
-            for: autoApplyChannel
-        )
+        queueRetune(rxMHz: rx, txMHz: tx, channel: autoApplyChannel, force: false, radioManager: radioManager)
     }
 
     func onSelectionChanged(radioManager: RadioManager) {
+        resetRadioRetuning()
         guard radioManager.isConnected else { return }
         if shouldUseRadioSatMode(radioManager: radioManager) {
             maybeSendSatModeInfo(radioManager: radioManager, force: true)
@@ -1012,9 +982,7 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
     private func sendFreqModeParametersNow(radioManager: RadioManager) {
         guard shouldUseRadioSatMode(radioManager: radioManager) else { return }
         let (rx, tx) = currentRxTxForSync()
-        let tones = selectedTonesFromFrequencyOption()
-        radioManager.setFreqModeParameters(rxMHz: rx, txMHz: tx, rxCTCSSHz: tones.rx, txCTCSSHz: tones.tx)
-        syncActiveVFOForSatelliteMode(radioManager: radioManager, rxMHz: rx, txMHz: tx)
+        queueRetune(rxMHz: rx, txMHz: tx, channel: autoApplyChannel, force: true, radioManager: radioManager)
     }
 
     private func currentRxTxForSync() -> (rx: Double, tx: Double) {
@@ -1024,39 +992,64 @@ final class SatelliteTrackingViewModel: NSObject, ObservableObject {
         return (nominalRxMHz, nominalTxMHz)
     }
 
-    private func applyTonesToActiveVFOIfNeeded(radioManager: RadioManager, rxMHz: Double, txMHz: Double) {
-        let tones = selectedTonesFromFrequencyOption()
-        // Guard: we need valid tones AND a real satellite option (not "custom")
-        guard selectedFrequencyOptionId != "custom",
-              (tones.rx != nil && tones.rx! > 0) || (tones.tx != nil && tones.tx! > 0) else {
-            return
-        }
-
-        let applyChannel: ChannelType = (radioManager.activeChannel == .off) ? .a : radioManager.activeChannel
-        let satId = selectedSatelliteId ?? -1
-        let key = String(format: "sat=%d|opt=%@|ch=%@|rx=%.1f|tx=%.1f", satId, selectedFrequencyOptionId, applyChannel.rawValue, tones.rx ?? -1, tones.tx ?? -1)
-        if key == lastToneWriteKey { return }
-        lastToneWriteKey = key
-
-        radioManager.setSplitFrequencyAndCTCSS(
-            rxMHz: rxMHz,
-            txMHz: txMHz,
-            rxCTCSSHz: tones.rx,
-            txCTCSSHz: tones.tx,
-            for: applyChannel
-        )
+    func resetRadioRetuning() {
+        retuneGeneration = UUID()
+        nominalSyncTask?.cancel()
+        nominalSyncTask = nil
+        retuneTask?.cancel()
+        retuneTask = nil
+        pendingRetune = nil
+        retunePolicy.reset()
+        lastSatModeSentAt = nil
+        lastSatModeSentKey = nil
     }
 
-    private func syncActiveVFOForSatelliteMode(radioManager: RadioManager, rxMHz: Double, txMHz: Double) {
-        let applyChannel: ChannelType = (radioManager.activeChannel == .off) ? .a : radioManager.activeChannel
+    private func queueRetune(rxMHz: Double, txMHz: Double, channel: ChannelType,
+                             force: Bool, radioManager: RadioManager) {
         let tones = selectedTonesFromFrequencyOption()
-        radioManager.setSplitFrequencyAndCTCSS(
-            rxMHz: rxMHz,
-            txMHz: txMHz,
-            rxCTCSSHz: tones.rx,
-            txCTCSSHz: tones.tx,
-            for: applyChannel
-        )
+        guard radioManager.isConnected, let controller = radioManager.radioController,
+              let target = SatelliteRetuneTarget(rxMHz: rxMHz, txMHz: txMHz, rxTone: tones.rx, txTone: tones.tx) else { return }
+        pendingRetune = RetuneRequest(target: target, force: force || (pendingRetune?.force ?? false),
+                                      nativeSatelliteMode: shouldUseRadioSatMode(radioManager: radioManager),
+                                      channel: channel, controller: controller)
+        guard retuneTask == nil else { return }
+        let generation = retuneGeneration
+        retuneTask = Task { [weak self, weak radioManager] in
+            guard let self, let radioManager else { return }
+            defer { if self.retuneGeneration == generation { self.retuneTask = nil } }
+            while let request = self.pendingRetune {
+                self.pendingRetune = nil
+                guard !Task.isCancelled, self.retuneGeneration == generation,
+                      radioManager.isConnected, radioManager.radioController === request.controller else { return }
+                guard self.retunePolicy.shouldApply(request.target, thresholdHz: self.autoApplyMinDeltaHz,
+                    holdDuringReceive: self.holdRetuningWhileReceiving, isReceiving: radioManager.isReceiving,
+                    force: request.force) else { continue }
+                do {
+                    let target = request.target
+                    if request.nativeSatelliteMode {
+                        try await request.controller.setFreqModeParameters(rxMHz: target.rxMHz, txMHz: target.txMHz,
+                            rxSubAudio: target.rxTone.map { .frequency($0) }, txSubAudio: target.txTone.map { .frequency($0) })
+                    } else {
+                        let id = request.channel == .b ? 251 : 252
+                        let existing = request.controller.channelsForCurrentRegion.first { $0.channelID == id }
+                        var channel = existing ?? Channel.empty(channelID: id)
+                        if existing == nil { channel.txAtMaxPower = true }
+                        channel.rxFreq = target.rxMHz
+                        channel.txFreq = target.txMHz
+                        channel.rxSubAudio = target.rxTone.map { .frequency($0) }
+                        channel.txSubAudio = target.txTone.map { .frequency($0) }
+                        try await request.controller.setChannel(channel)
+                    }
+                    guard !Task.isCancelled, self.retuneGeneration == generation else { return }
+                    self.retunePolicy.recordApplied(request.target)
+                } catch {
+                    if !Task.isCancelled, self.retuneGeneration == generation {
+                        self.errorMessage = "Unable to retune the radio: \(error.localizedDescription)"
+                    }
+                    return
+                }
+            }
+        }
     }
 
     private func maybeSendSatModeInfo(radioManager: RadioManager, force: Bool = false) {

@@ -13,6 +13,9 @@ FieldHT.xcodeproj/xcuserdata/
 # Xcode derived data
 DerivedData/
 
+# Local xcodebuild scratch output
+.build/
+
 # macOS
 .DS_Store
 

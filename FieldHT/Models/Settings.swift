@@ -2,6 +2,10 @@ import Foundation
 
 /// Radio settings
 public struct Settings: Codable, Equatable {
+    public static let maxScreenTimeout = 31
+    public static let alwaysOnScreenTimeout = 31
+    public static let selectableScreenTimeouts = [5, 10, 15, 20, 25, alwaysOnScreenTimeout]
+
     public var channelA: Int
     public var channelB: Int
     public var scan: Bool
@@ -216,5 +220,9 @@ public struct Settings: Codable, Equatable {
             vfo1ModFreqX: 0,
             vfo2ModFreqX: 0
         )
+    }
+
+    public static func clampedScreenTimeout(_ value: Int) -> Int {
+        min(max(value, 0), maxScreenTimeout)
     }
 }

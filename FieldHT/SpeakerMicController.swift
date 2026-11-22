@@ -25,6 +25,13 @@ public final class SpeakerMicController: ObservableObject {
     private init(deviceUUID: UUID, connection: CommandConnection) {
         self.deviceUUID = deviceUUID
         self.connection = connection
+        connection.onTransportDisconnect = { [weak self] error in
+            guard let self else { return }
+            self.batteryPollTask?.cancel()
+            self.batteryPollTask = nil
+            if self.isConnected { self.errorMessage = error?.localizedDescription ?? "The direct speaker-mic connection ended. Reconnect when it is nearby." }
+            self.isConnected = false
+        }
     }
 
     public static func newBLE(deviceUUID: UUID) -> SpeakerMicController {
@@ -66,6 +73,7 @@ public final class SpeakerMicController: ObservableObject {
     }
 
     public func connect() async throws {
+        try Task.checkCancellation()
         if isConnected || isConnecting {
             return
         }
@@ -76,13 +84,15 @@ public final class SpeakerMicController: ObservableObject {
 
         do {
             try await connection.connect()
+            try Task.checkCancellation()
             try await hydrate()
+            try Task.checkCancellation()
             isConnected = true
             lastConnectedAt = Date()
             startBatteryPolling()
         } catch {
             await disconnect()
-            errorMessage = error.localizedDescription
+            errorMessage = error is CancellationError ? nil : error.localizedDescription
             throw error
         }
     }

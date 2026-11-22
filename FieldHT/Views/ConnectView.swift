@@ -3,8 +3,10 @@ import CoreBluetooth
 
 struct ConnectView: View {
     @EnvironmentObject var radioManager: RadioManager
+    @Environment(\.openURL) private var openURL
     @StateObject private var scanner = BLEScanner()
     @State private var selectedDevice: DiscoveredDevice?
+    @State private var hasStartedInitialScan = false
 
     private let accentOrange = Color(red: 0.96, green: 0.48, blue: 0.19)
     private let accentBlue = Color(red: 0.28, green: 0.63, blue: 0.95)
@@ -14,7 +16,7 @@ struct ConnectView: View {
     private let cardStroke = Color.white.opacity(0.08)
 
     private var isBusy: Bool {
-        radioManager.isConnecting || radioManager.isAutoReconnecting
+        radioManager.isConnecting || radioManager.isAutoReconnecting || radioManager.isDisconnecting
     }
 
     private var savedDevice: DiscoveredDevice? {
@@ -44,10 +46,7 @@ struct ConnectView: View {
     }
 
     private var nearbyDevices: [DiscoveredDevice] {
-        scanner.discoveredDevices.filter { device in
-            guard let savedDevice else { return true }
-            return device.id != savedDevice.id
-        }
+        scanner.discoveredDevices
     }
 
     private var heroEyebrow: String {
@@ -89,6 +88,9 @@ struct ConnectView: View {
         if radioManager.isConnecting {
             return "Opening the Bluetooth link."
         }
+        if radioManager.isRadioReconnectPaused {
+            return "Connection attempts are paused. Reconnect when the radio is nearby, or choose another radio."
+        }
         if hasSavedRadio {
             return "Reconnect in one tap, forget this radio, or scan for a different one nearby."
         }
@@ -116,8 +118,9 @@ struct ConnectView: View {
     }
 
     private var busyActionTitle: String {
+        if radioManager.isDisconnecting { return "Disconnecting..." }
         if radioManager.isAutoReconnecting {
-            return "Reconnecting..."
+            return "Reconnecting: attempt \(radioManager.reconnectAttempt + 1) of \(ConnectionUXPolicy.maximumAutomaticRadioAttempts)"
         }
         if radioManager.isConnecting {
             return "Connecting..."
@@ -130,7 +133,7 @@ struct ConnectView: View {
     }
 
     private var shouldShowPairingInstructions: Bool {
-        !radioManager.isConnected && !hasSavedRadio && nearbyDevices.isEmpty && canScan
+        !radioManager.isConnected && (!hasSavedRadio || scanner.isScanning) && nearbyDevices.isEmpty && canScan
     }
 
     private var bluetoothStatusTitle: String {
@@ -173,6 +176,7 @@ struct ConnectView: View {
                 heroCard
 
                 if !radioManager.isConnected,
+                   !isBusy,
                    let error = radioManager.connectionError,
                    !error.isEmpty {
                     errorCard(error)
@@ -190,7 +194,7 @@ struct ConnectView: View {
         .navigationTitle("Connect")
         .navigationBarTitleDisplayMode(.large)
         .refreshable {
-            guard !radioManager.isConnected, !radioManager.isConnecting else { return }
+            guard !radioManager.isConnected, !radioManager.isDisconnecting else { return }
             rescan()
         }
         .task {
@@ -207,10 +211,12 @@ struct ConnectView: View {
             }
             updateScanningState()
         }
+        .onChange(of: radioManager.isConnecting) { updateScanningState() }
+        .onChange(of: radioManager.isAutoReconnecting) {
+            if radioManager.isAutoReconnecting { selectedDevice = savedDevice }
+        }
         .onDisappear {
-            if !radioManager.isConnected {
-                scanner.stopScanning()
-            }
+            scanner.stopScanning()
         }
         .animation(.snappy(duration: 0.25), value: radioManager.isConnected)
         .animation(.snappy(duration: 0.25), value: scanner.isScanning)
@@ -268,18 +274,20 @@ struct ConnectView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
+                    .disabled(isBusy)
                 } else if isBusy {
-                    Button {} label: {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text(busyActionTitle)
+                    ProgressView(busyActionTitle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if !radioManager.isDisconnecting {
+                        Button("Cancel Connection", role: .cancel) {
+                            hasStartedInitialScan = true
+                            scanner.stopScanning()
+                            radioManager.cancelRadioConnection()
                         }
-                        .frame(maxWidth: .infinity)
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("radio.cancelConnection")
+                        scanButton(title: "Choose Another Radio")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(accentOrange)
-                    .disabled(true)
                 } else if hasSavedRadio {
                     ViewThatFits {
                         HStack(spacing: 10) {
@@ -296,9 +304,17 @@ struct ConnectView: View {
                     scanButton(title: "Scan Nearby Radios")
                 }
 
-                if radioManager.isConnected, hasSavedRadio {
+                if hasSavedRadio {
                     Toggle("Reconnect Automatically", isOn: $radioManager.autoReconnectEnabled)
-                        .disabled(isBusy)
+                        .disabled(radioManager.isDisconnecting)
+                    Text("Automatic attempts stop after three failures. Cancel pauses this session without forgetting the radio.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    if !radioManager.isConnected {
+                        Button("Forget Saved Radio", role: .destructive, action: forgetSavedRadio)
+                            .buttonStyle(.borderless)
+                            .disabled(radioManager.isDisconnecting)
+                    }
                 }
 
                 if shouldShowPairingInstructions {
@@ -310,16 +326,7 @@ struct ConnectView: View {
             }
         }
 
-        if !radioManager.isConnected && !isBusy && hasSavedRadio {
-            SwipeActionCard(
-                content: content,
-                actionLabel: "Forget",
-                actionSystemImage: "trash",
-                action: forgetSavedRadio
-            )
-        } else {
-            content
-        }
+        content
     }
 
     private var nearbyRadiosCard: some View {
@@ -337,7 +344,13 @@ struct ConnectView: View {
                     }
 
                     Spacer(minLength: 12)
-
+                    if scanner.isScanning {
+                        Button("Stop Scan") { scanner.stopScanning() }
+                            .accessibilityIdentifier("radio.stopScan")
+                    } else {
+                        Button("Scan", action: rescan)
+                            .disabled(!canScan || radioManager.isDisconnecting)
+                    }
                 }
 
                 if !canScan {
@@ -347,6 +360,12 @@ struct ConnectView: View {
                         title: bluetoothStatusTitle,
                         detail: bluetoothStatusDetail
                     )
+                    if scanner.bluetoothState == .unauthorized {
+                        Button("Open Settings", systemImage: "gear") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                        }
+                        .buttonStyle(.bordered)
+                    }
                 } else if nearbyDevices.isEmpty {
                     nearbyEmptyState
                 } else {
@@ -389,10 +408,9 @@ struct ConnectView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if !hasSavedRadio {
-                scanButton(title: scanner.isScanning ? "Scanning..." : "Start Scan")
-                    .disabled(!canScan || isBusy || scanner.isScanning)
-            }
+            Text(scanner.isScanning ? "Scanning for up to 15 seconds. You can stop at any time." : "Tap Scan to refresh nearby radios. Your saved radio does not need to be forgotten first.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
@@ -442,7 +460,7 @@ struct ConnectView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(.plain)
-        .disabled(isBusy || radioManager.isConnected)
+        .disabled(radioManager.isDisconnecting || radioManager.isConnected)
     }
 
     private func nearbyMessageRow(symbol: String, tint: Color, title: String, detail: String) -> some View {
@@ -508,7 +526,7 @@ struct ConnectView: View {
         }
         .buttonStyle(.bordered)
         .tint(.primary)
-        .disabled(!canScan || isBusy)
+        .disabled(!canScan || radioManager.isDisconnecting)
     }
 
     private var reconnectButton: some View {
@@ -545,7 +563,9 @@ struct ConnectView: View {
     }
 
     private func rescan() {
-        guard canScan, !isBusy else { return }
+        guard canScan, !radioManager.isConnected, !radioManager.isDisconnecting else { return }
+        hasStartedInitialScan = true
+        radioManager.cancelRadioConnection()
         scanner.stopScanning()
         scanner.startScanning()
     }
@@ -554,8 +574,11 @@ struct ConnectView: View {
         if !radioManager.isConnected,
            !radioManager.isConnecting,
            !hasSavedRadio,
+           !hasStartedInitialScan,
+           !radioManager.isRadioReconnectPaused,
            canScan,
            !scanner.isScanning {
+            hasStartedInitialScan = true
             scanner.startScanning()
         }
 
@@ -565,29 +588,25 @@ struct ConnectView: View {
     }
 
     private func connectToDevice(_ device: DiscoveredDevice) {
-        scanner.validateRadioService(device) { isRadio in
-            guard isRadio else {
-                print("Not a radio device")
-                return
-            }
-
-            scanner.saveLastPairedDevice(device)
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                radioManager.connect(to: device.peripheral.identifier)
-            }
-        }
+        hasStartedInitialScan = true
+        scanner.stopScanning()
+        radioManager.cancelRadioConnection()
+        selectedDevice = device
+        radioManager.connect(to: device.id)
     }
 
     private func reconnectSavedRadio() {
         guard let savedUUID = radioManager.lastPairedDeviceUUID else { return }
+        hasStartedInitialScan = true
+        scanner.stopScanning()
         selectedDevice = savedDevice
         radioManager.connect(to: savedUUID)
     }
 
     private func forgetSavedRadio() {
         let savedUUID = radioManager.lastPairedDeviceUUID
-
+        hasStartedInitialScan = true
+        scanner.stopScanning()
         radioManager.forgetLastPairedRadio()
         scanner.clearLastPairedDevice()
 
@@ -600,80 +619,6 @@ struct ConnectView: View {
 #Preview {
     NavigationStack {
         ConnectView()
-            .environmentObject(RadioManager())
-    }
-}
-
-private struct SwipeActionCard<Content: View>: View {
-    let content: Content
-    let actionLabel: String
-    let actionSystemImage: String
-    let action: () -> Void
-
-    @State private var offsetX: CGFloat = 0
-
-    private let revealWidth: CGFloat = 104
-
-    init(
-        content: Content,
-        actionLabel: String,
-        actionSystemImage: String,
-        action: @escaping () -> Void
-    ) {
-        self.content = content
-        self.actionLabel = actionLabel
-        self.actionSystemImage = actionSystemImage
-        self.action = action
-    }
-
-    var body: some View {
-        ZStack(alignment: .trailing) {
-            Button(role: .destructive) {
-                withAnimation(.snappy(duration: 0.2)) {
-                    offsetX = 0
-                }
-                action()
-            } label: {
-                VStack(spacing: 6) {
-                    Image(systemName: actionSystemImage)
-                        .font(.headline)
-                    Text(actionLabel)
-                        .font(.footnote.weight(.semibold))
-                }
-                .frame(width: revealWidth)
-                .frame(maxHeight: .infinity)
-                .foregroundStyle(.white)
-                .padding(.vertical, 22)
-            }
-            .buttonStyle(.plain)
-            .background(Color.red, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-
-            content
-                .offset(x: offsetX)
-                .gesture(
-                    DragGesture(minimumDistance: 8)
-                        .onChanged { value in
-                            let proposedOffset = value.translation.width
-                            offsetX = min(0, max(-revealWidth, proposedOffset))
-                        }
-                        .onEnded { value in
-                            withAnimation(.snappy(duration: 0.2)) {
-                                if value.translation.width < -(revealWidth * 0.45) {
-                                    offsetX = -revealWidth
-                                } else {
-                                    offsetX = 0
-                                }
-                            }
-                        }
-                )
-                .onTapGesture {
-                    if offsetX != 0 {
-                        withAnimation(.snappy(duration: 0.2)) {
-                            offsetX = 0
-                        }
-                    }
-                }
-        }
-        .clipped()
+            .environmentObject(RadioManager(restoreSavedRadio: false))
     }
 }

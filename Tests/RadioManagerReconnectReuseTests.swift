@@ -22,6 +22,17 @@ enum RadioManagerReconnectReuseTests {
 
         expect(!disconnect.contains("self.connectionController = nil"), "manual disconnect must retain the BLE controller for reconnect")
         expect(!disconnect.contains("self.connectionControllerDeviceUUID = nil"), "manual disconnect must retain the saved controller identity")
+        expect(source.contains("radio.$state.sink"), "physical memory selections must be observed before switching into VFO mode")
+        expect(source.contains("let id = isVFOA ? vfoAIndex : 252"), "VFO A must display the hidden slot actually selected by the radio")
+        expect(source.contains("let id = isVFOB ? vfoBIndex : 251"), "VFO B must display the hidden slot actually selected by the radio")
+        let tuneStart = source.range(of: "    public func tuneVFO")!.lowerBound
+        let tuneEnd = source.range(of: "    /// Set frequency for VFO without")!.lowerBound
+        let tune = source[tuneStart..<tuneEnd]
+        expect(tune.range(of: "controller.setChannel")!.lowerBound < tune.range(of: "controller.setSettings")!.lowerBound,
+               "VFO frequency must be written before the hidden slot is selected")
+        let controller = try String(contentsOf: root.appending(path: "FieldHT/RadioController.swift"), encoding: .utf8)
+        expect(controller.contains("refreshSelectedVFOs(previous: previous, current: settings)"), "physical VFO selection must refresh the hidden slot without rereading every channel")
+        expect(controller.contains("self.vfoRefreshTasks.removeValue(forKey: channel.channelID)?.cancel()"), "a newer channel notification must supersede an in-flight VFO refresh")
 
         if failures > 0 {
             exit(1)

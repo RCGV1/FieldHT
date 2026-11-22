@@ -177,10 +177,10 @@ public struct ProtocolEncoder {
         stream.writeBool(settings.pttLock)
         stream.writeBool(settings.leadingSyncBitEn)
         stream.writeBool(settings.pairingAtPowerOn)
-        if settings.screenTimeout > 31 {
-            print("[PROTOCOL-WARN] ScreenTimeout value \(settings.screenTimeout) exceeds 5 bits (max 31). Truncating.")
+        if settings.screenTimeout > Settings.maxScreenTimeout {
+            print("[PROTOCOL-WARN] ScreenTimeout value \(settings.screenTimeout) exceeds 5 bits (max \(Settings.maxScreenTimeout)). Clamping.")
         }
-        stream.writeInt(settings.screenTimeout, bitCount: 5)
+        stream.writeInt(Settings.clampedScreenTimeout(settings.screenTimeout), bitCount: 5)
         stream.writeInt(settings.vfoX, bitCount: 2)
         stream.writeBool(settings.imperialUnit)
         stream.writeInt(channelAUpper, bitCount: 4)
